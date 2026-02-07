@@ -3,30 +3,23 @@ name: Build Unity VR Player
 on:
   push:
     branches: [ main ]
-    tags: ['v*']
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build Android APK
+    name: Build APK
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      
-      - name: Cache
-        uses: actions/cache@v4
-        with:
-          path: Library/
-          key: unity-library-${{ runner.os }}
 
       - name: Build
         run: |
           echo "Building Unity VR Player..."
           echo "Unity version: 2022.3.4040f1"
           echo "Build target: Android"
-          
-      - name: Build Summary
+
+      - name: Done
         run: |
           echo "✅ Build completed!"
