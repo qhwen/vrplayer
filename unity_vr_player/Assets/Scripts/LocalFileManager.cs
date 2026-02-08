@@ -60,9 +60,11 @@ public class LocalFileManager : MonoBehaviour
     {
 #if UNITY_ANDROID && !UNITY_EDITOR
         const string readMediaVideo = "android.permission.READ_MEDIA_VIDEO";
+        const string readSelectedVisualMedia = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED";
 
         bool hasLegacy = Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead);
         bool hasMediaVideo = Permission.HasUserAuthorizedPermission(readMediaVideo);
+        bool hasSelectedMedia = Permission.HasUserAuthorizedPermission(readSelectedVisualMedia);
 
         if (!hasLegacy)
         {
@@ -76,8 +78,9 @@ public class LocalFileManager : MonoBehaviour
 
         hasLegacy = Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead);
         hasMediaVideo = Permission.HasUserAuthorizedPermission(readMediaVideo);
+        hasSelectedMedia = Permission.HasUserAuthorizedPermission(readSelectedVisualMedia);
 
-        return hasLegacy || hasMediaVideo;
+        return hasLegacy || hasMediaVideo || hasSelectedMedia;
 #else
         return true;
 #endif
@@ -406,6 +409,10 @@ public class LocalFileManager : MonoBehaviour
                 });
 
                 deduplicate.Add(dedupKey);
+                if (!string.IsNullOrWhiteSpace(filePath))
+                {
+                    deduplicate.Add(contentUri);
+                }
             }
         }
         catch (Exception e)

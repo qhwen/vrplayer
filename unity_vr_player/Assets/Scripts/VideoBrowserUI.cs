@@ -191,7 +191,7 @@ public class VideoBrowserUI : MonoBehaviour
             if (!localFileManager.HasReadableMediaPermission())
             {
                 idleStatusMessage = "Storage permission required";
-                hintText.text = "Allow media read permission, then tap Refresh again.";
+                hintText.text = "Allow media permission (Photos and videos), then tap Refresh again. If no popup appears, reinstall this build once and retry.";
             }
             else
             {
@@ -491,4 +491,5 @@ public class VideoBrowserUI : MonoBehaviour
         return button;
     }
 }
+
 
