@@ -1,19 +1,29 @@
-﻿using System.Collections.Generic;
+using System;
+using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
+#if UNITY_ANDROID
+using UnityEngine.Android;
+#endif
 
 /// <summary>
-/// 本地文件管理器。
+/// Local media discovery and cache manager.
 /// </summary>
 public class LocalFileManager : MonoBehaviour
 {
     private static LocalFileManager instance;
     public static LocalFileManager Instance => instance;
 
+    [Header("Scan Settings")]
+    [SerializeField] private bool includeCommonMediaFolders = true;
+    [SerializeField, Range(1, 6)] private int scanDepth = 3;
+
     private readonly List<VideoFile> localVideos = new List<VideoFile>();
+    private readonly string[] supportedExtensions = { ".mp4", ".mkv", ".mov" };
+
     private string cacheDirectory = string.Empty;
 
     private void Awake()
@@ -23,6 +33,7 @@ public class LocalFileManager : MonoBehaviour
             instance = this;
             DontDestroyOnLoad(gameObject);
             InitializeCacheDirectory();
+            RequestRuntimePermissions();
             return;
         }
 
@@ -41,37 +52,39 @@ public class LocalFileManager : MonoBehaviour
             Directory.CreateDirectory(cacheDirectory);
         }
 
-        Debug.Log("缓存目录: " + cacheDirectory);
+        Debug.Log("Cache directory: " + cacheDirectory);
+    }
+
+    private static void RequestRuntimePermissions()
+    {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (!Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead))
+        {
+            Permission.RequestUserPermission(Permission.ExternalStorageRead);
+        }
+
+        const string readMediaVideo = "android.permission.READ_MEDIA_VIDEO";
+        if (!Permission.HasUserAuthorizedPermission(readMediaVideo))
+        {
+            Permission.RequestUserPermission(readMediaVideo);
+        }
+#endif
     }
 
     public void OpenFilePicker()
     {
 #if UNITY_EDITOR
-        string path = EditorUtility.OpenFilePanel("选择视频文件", "", "mp4,mkv,mov");
+        string path = EditorUtility.OpenFilePanel("Select video file", "", "mp4,mkv,mov");
         if (!string.IsNullOrWhiteSpace(path))
         {
             AddLocalVideo(path);
         }
 #elif UNITY_ANDROID
-        OpenFilePickerAndroid();
+        Debug.LogWarning("Android file picker plugin is not integrated yet. Put video files into Movies or app cache folder.");
 #elif UNITY_IOS
-        OpenFilePickerIOS();
+        Debug.LogWarning("iOS file picker plugin is not integrated yet.");
 #else
-        Debug.LogWarning("当前平台未接入文件选择器，请先将视频放入缓存目录。");
-#endif
-    }
-
-    private void OpenFilePickerAndroid()
-    {
-#if UNITY_ANDROID
-        Debug.LogWarning("Android 文件选择器需要 SAF 原生插件，当前尚未接入。");
-#endif
-    }
-
-    private void OpenFilePickerIOS()
-    {
-#if UNITY_IOS
-        Debug.LogWarning("iOS 文件选择器需要原生插件，当前尚未接入。");
+        Debug.LogWarning("File picker is not available on this platform.");
 #endif
     }
 
@@ -79,29 +92,20 @@ public class LocalFileManager : MonoBehaviour
     {
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
         {
-            Debug.LogError("文件不存在: " + filePath);
+            Debug.LogError("File does not exist: " + filePath);
             return;
         }
 
-        if (localVideos.Exists(v => v.localPath == filePath))
+        HashSet<string> deduplicate = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (VideoFile video in localVideos)
         {
-            return;
+            if (!string.IsNullOrWhiteSpace(video.localPath))
+            {
+                deduplicate.Add(video.localPath);
+            }
         }
 
-        FileInfo info = new FileInfo(filePath);
-
-        VideoFile video = new VideoFile
-        {
-            name = Path.GetFileName(filePath),
-            path = filePath,
-            localPath = filePath,
-            url = "file://" + filePath,
-            is360 = Path.GetFileName(filePath).ToLower().Contains("360"),
-            size = info.Length
-        };
-
-        localVideos.Add(video);
-        Debug.Log("添加本地视频: " + video.name);
+        TryAddVideo(filePath, deduplicate);
     }
 
     public List<VideoFile> GetLocalVideos()
@@ -114,40 +118,167 @@ public class LocalFileManager : MonoBehaviour
     {
         localVideos.Clear();
 
-        if (!Directory.Exists(cacheDirectory))
+        HashSet<string> deduplicate = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        List<string> roots = BuildSearchRoots();
+
+        for (int i = 0; i < roots.Count; i++)
+        {
+            ScanDirectoryRecursive(roots[i], deduplicate, 0);
+        }
+
+        localVideos.Sort((a, b) => string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase));
+        Debug.Log("Refreshed local videos: " + localVideos.Count);
+    }
+
+    private List<string> BuildSearchRoots()
+    {
+        List<string> roots = new List<string>();
+
+        AddSearchRoot(roots, cacheDirectory);
+        AddSearchRoot(roots, Application.persistentDataPath);
+
+        if (!includeCommonMediaFolders)
+        {
+            return roots;
+        }
+
+#if UNITY_ANDROID
+        AddSearchRoot(roots, "/storage/emulated/0/Movies");
+        AddSearchRoot(roots, "/storage/emulated/0/DCIM");
+        AddSearchRoot(roots, "/storage/emulated/0/Download");
+        AddSearchRoot(roots, "/sdcard/Movies");
+        AddSearchRoot(roots, "/sdcard/DCIM");
+        AddSearchRoot(roots, "/sdcard/Download");
+#else
+        AddSearchRoot(roots, Environment.GetFolderPath(Environment.SpecialFolder.MyVideos));
+        AddSearchRoot(roots, Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        AddSearchRoot(roots, Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory));
+#endif
+
+        return roots;
+    }
+
+    private static void AddSearchRoot(List<string> roots, string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        string normalized = path.Trim();
+        for (int i = 0; i < roots.Count; i++)
+        {
+            if (string.Equals(roots[i], normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        roots.Add(normalized);
+    }
+
+    private void ScanDirectoryRecursive(string directory, HashSet<string> deduplicate, int depth)
+    {
+        if (string.IsNullOrWhiteSpace(directory) || depth > scanDepth)
+        {
+            return;
+        }
+
+        if (!Directory.Exists(directory))
         {
             return;
         }
 
         try
         {
-            string[] files = Directory.GetFiles(cacheDirectory, "*.*", SearchOption.AllDirectories);
-            foreach (string filePath in files)
+            string[] files = Directory.GetFiles(directory, "*.*", SearchOption.TopDirectoryOnly);
+            for (int i = 0; i < files.Length; i++)
             {
-                string extension = Path.GetExtension(filePath).ToLowerInvariant();
-                if (extension != ".mp4" && extension != ".mkv" && extension != ".mov")
-                {
-                    continue;
-                }
-
-                FileInfo info = new FileInfo(filePath);
-                localVideos.Add(new VideoFile
-                {
-                    name = Path.GetFileName(filePath),
-                    path = filePath,
-                    localPath = filePath,
-                    url = "file://" + filePath,
-                    is360 = Path.GetFileName(filePath).ToLower().Contains("360"),
-                    size = info.Length
-                });
+                TryAddVideo(files[i], deduplicate);
             }
-
-            Debug.Log("刷新本地视频列表: " + localVideos.Count + " 个视频");
         }
-        catch (System.Exception e)
+        catch (Exception e)
         {
-            Debug.LogError("刷新视频列表失败: " + e.Message);
+            Debug.LogWarning("Cannot read files from directory: " + directory + " | " + e.Message);
         }
+
+        if (depth >= scanDepth)
+        {
+            return;
+        }
+
+        try
+        {
+            string[] subDirectories = Directory.GetDirectories(directory, "*", SearchOption.TopDirectoryOnly);
+            for (int i = 0; i < subDirectories.Length; i++)
+            {
+                ScanDirectoryRecursive(subDirectories[i], deduplicate, depth + 1);
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("Cannot enumerate sub directories: " + directory + " | " + e.Message);
+        }
+    }
+
+    private void TryAddVideo(string filePath, HashSet<string> deduplicate)
+    {
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+        {
+            return;
+        }
+
+        string extension = Path.GetExtension(filePath);
+        if (!IsSupportedVideoExtension(extension))
+        {
+            return;
+        }
+
+        if (deduplicate.Contains(filePath))
+        {
+            return;
+        }
+
+        FileInfo info;
+        try
+        {
+            info = new FileInfo(filePath);
+        }
+        catch
+        {
+            return;
+        }
+
+        localVideos.Add(new VideoFile
+        {
+            name = Path.GetFileName(filePath),
+            path = filePath,
+            localPath = filePath,
+            url = "file://" + filePath,
+            is360 = Path.GetFileName(filePath).ToLowerInvariant().Contains("360"),
+            size = info.Exists ? info.Length : 0
+        });
+
+        deduplicate.Add(filePath);
+    }
+
+    private bool IsSupportedVideoExtension(string extension)
+    {
+        if (string.IsNullOrWhiteSpace(extension))
+        {
+            return false;
+        }
+
+        string normalized = extension.ToLowerInvariant();
+        for (int i = 0; i < supportedExtensions.Length; i++)
+        {
+            if (normalized == supportedExtensions[i])
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public bool DeleteLocalVideo(string filePath)
@@ -167,12 +298,12 @@ public class LocalFileManager : MonoBehaviour
                 localVideos.Remove(toRemove);
             }
 
-            Debug.Log("删除视频: " + filePath);
+            Debug.Log("Deleted video: " + filePath);
             return true;
         }
-        catch (System.Exception e)
+        catch (Exception e)
         {
-            Debug.LogError("删除视频失败: " + e.Message);
+            Debug.LogError("Delete failed: " + e.Message);
             return false;
         }
     }
@@ -190,11 +321,11 @@ public class LocalFileManager : MonoBehaviour
             Directory.CreateDirectory(cacheDirectory);
             localVideos.Clear();
 
-            Debug.Log("清空缓存");
+            Debug.Log("Cache cleared");
         }
-        catch (System.Exception e)
+        catch (Exception e)
         {
-            Debug.LogError("清空缓存失败: " + e.Message);
+            Debug.LogError("Failed to clear cache: " + e.Message);
         }
     }
 
@@ -211,11 +342,19 @@ public class LocalFileManager : MonoBehaviour
         }
 
         long totalSize = 0;
-        DirectoryInfo directory = new DirectoryInfo(cacheDirectory);
 
-        foreach (FileInfo file in directory.GetFiles("*.*", SearchOption.AllDirectories))
+        try
         {
-            totalSize += file.Length;
+            DirectoryInfo directory = new DirectoryInfo(cacheDirectory);
+            FileInfo[] files = directory.GetFiles("*.*", SearchOption.AllDirectories);
+            for (int i = 0; i < files.Length; i++)
+            {
+                totalSize += files[i].Length;
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("Failed to calculate cache size: " + e.Message);
         }
 
         return totalSize;

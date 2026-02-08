@@ -1,19 +1,24 @@
-﻿using System.Collections;
+using System.Collections;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using UnityEngine.Video;
 
 /// <summary>
-/// VR 视频播放器主控制器。
+/// VR video player controller.
 /// </summary>
 public class VRVideoPlayer : MonoBehaviour
 {
-    [Header("视频播放器设置")]
+    [Header("Video Settings")]
     [SerializeField] private string defaultVideoPath = "";
     [SerializeField] private GameObject skySpherePrefab;
     [SerializeField] private bool enableHeadTracking = true;
     [SerializeField] private float rotationSensitivity = 0.5f;
     [SerializeField, Range(0.01f, 1f)] private float smoothingFactor = 0.1f;
+
+    [Header("Input Settings")]
+    [SerializeField] private bool enablePointerDrag = true;
+    [SerializeField] private float pointerDeltaScale = 1f;
 
     private VideoPlayer videoPlayer;
     private RenderTexture renderTexture;
@@ -21,6 +26,7 @@ public class VRVideoPlayer : MonoBehaviour
 
     private bool isPlaying;
     private bool isInitialized;
+    private bool hasVideoSource;
 
     private float currentYaw;
     private float currentPitch;
@@ -33,6 +39,9 @@ public class VRVideoPlayer : MonoBehaviour
     private Canvas uiCanvas;
     private Text playbackStatusText;
     private Text timeText;
+
+    private Vector2 lastPointerPosition;
+    private bool isPointerDragging;
 
     private void Awake()
     {
@@ -49,6 +58,7 @@ public class VRVideoPlayer : MonoBehaviour
         if (!string.IsNullOrWhiteSpace(defaultVideoPath))
         {
             videoPlayer.url = defaultVideoPath;
+            hasVideoSource = true;
         }
 
         if (skySpherePrefab != null)
@@ -62,7 +72,7 @@ public class VRVideoPlayer : MonoBehaviour
 
         if (skySphere == null)
         {
-            Debug.LogError("天空球体创建失败，播放器已禁用。");
+            Debug.LogError("Sky sphere creation failed. Player is disabled.");
             enabled = false;
             return;
         }
@@ -105,6 +115,11 @@ public class VRVideoPlayer : MonoBehaviour
             Graphics.Blit(videoPlayer.texture, renderTexture);
         }
 
+        if (enablePointerDrag)
+        {
+            HandlePointerDrag();
+        }
+
         if (enableHeadTracking)
         {
             SmoothHeadTracking();
@@ -126,9 +141,18 @@ public class VRVideoPlayer : MonoBehaviour
             videoPlayer.Stop();
         }
 
+        string finalPath = path.Trim();
+        if (finalPath.StartsWith("file://") && !finalPath.StartsWith("file:///"))
+        {
+            finalPath = "file:///" + finalPath.Substring("file://".Length).TrimStart('/');
+        }
+
+        hasVideoSource = true;
         isInitialized = false;
-        videoPlayer.url = path;
+        videoPlayer.url = finalPath;
         videoPlayer.Prepare();
+
+        Debug.Log("Prepare video: " + finalPath);
     }
 
     public void PauseVideo()
@@ -146,6 +170,16 @@ public class VRVideoPlayer : MonoBehaviour
     {
         if (videoPlayer == null)
         {
+            return;
+        }
+
+        if (!isInitialized)
+        {
+            if (hasVideoSource && !string.IsNullOrWhiteSpace(videoPlayer.url))
+            {
+                videoPlayer.Prepare();
+            }
+
             return;
         }
 
@@ -189,6 +223,87 @@ public class VRVideoPlayer : MonoBehaviour
     {
         targetYaw = yaw;
         targetPitch = Mathf.Clamp(pitch, -90f, 90f);
+    }
+
+    private void HandlePointerDrag()
+    {
+        if (Input.touchCount > 0)
+        {
+            Touch touch = Input.GetTouch(0);
+
+            if (touch.phase == TouchPhase.Began)
+            {
+                isPointerDragging = true;
+                lastPointerPosition = touch.position;
+                return;
+            }
+
+            if (touch.phase == TouchPhase.Ended || touch.phase == TouchPhase.Canceled)
+            {
+                isPointerDragging = false;
+                return;
+            }
+
+            if (!isPointerDragging)
+            {
+                return;
+            }
+
+            if (IsPointerOverUI(touch.fingerId))
+            {
+                lastPointerPosition = touch.position;
+                return;
+            }
+
+            Vector2 delta = touch.position - lastPointerPosition;
+            lastPointerPosition = touch.position;
+
+            OnDrag(delta.x * pointerDeltaScale, delta.y * pointerDeltaScale);
+            return;
+        }
+
+        if (Input.GetMouseButtonDown(0))
+        {
+            isPointerDragging = true;
+            lastPointerPosition = Input.mousePosition;
+            return;
+        }
+
+        if (Input.GetMouseButtonUp(0))
+        {
+            isPointerDragging = false;
+            return;
+        }
+
+        if (isPointerDragging && Input.GetMouseButton(0))
+        {
+            if (IsPointerOverUI(-1))
+            {
+                lastPointerPosition = Input.mousePosition;
+                return;
+            }
+
+            Vector2 mousePosition = Input.mousePosition;
+            Vector2 delta = mousePosition - lastPointerPosition;
+            lastPointerPosition = mousePosition;
+
+            OnDrag(delta.x * pointerDeltaScale, delta.y * pointerDeltaScale);
+        }
+    }
+
+    private static bool IsPointerOverUI(int pointerId)
+    {
+        if (EventSystem.current == null)
+        {
+            return false;
+        }
+
+        if (pointerId >= 0)
+        {
+            return EventSystem.current.IsPointerOverGameObject(pointerId);
+        }
+
+        return EventSystem.current.IsPointerOverGameObject();
     }
 
     private void SmoothHeadTracking()
@@ -245,7 +360,7 @@ public class VRVideoPlayer : MonoBehaviour
 
         Font font = Resources.GetBuiltinResource<Font>("Arial.ttf");
 
-        playbackStatusText = CreateText("StatusText", "准备就绪", new Vector2(0f, 300f), 24, font);
+        playbackStatusText = CreateText("StatusText", "Waiting for video selection", new Vector2(0f, 300f), 24, font);
         timeText = CreateText("TimeText", "00:00 / 00:00", new Vector2(0f, 250f), 18, font);
     }
 
@@ -262,7 +377,7 @@ public class VRVideoPlayer : MonoBehaviour
         text.text = content;
 
         RectTransform rect = text.GetComponent<RectTransform>();
-        rect.sizeDelta = new Vector2(400f, 40f);
+        rect.sizeDelta = new Vector2(600f, 40f);
         rect.anchoredPosition = anchoredPosition;
 
         return text;
@@ -275,20 +390,28 @@ public class VRVideoPlayer : MonoBehaviour
             return;
         }
 
+        if (!hasVideoSource)
+        {
+            playbackStatusText.text = "Choose a video from the right panel";
+            playbackStatusText.color = Color.white;
+            return;
+        }
+
         if (!isInitialized)
         {
-            playbackStatusText.text = "加载中...";
+            playbackStatusText.text = "Loading...";
+            playbackStatusText.color = Color.cyan;
             return;
         }
 
         if (isPlaying)
         {
-            playbackStatusText.text = "播放中";
+            playbackStatusText.text = "Playing";
             playbackStatusText.color = Color.green;
         }
         else
         {
-            playbackStatusText.text = "已暂停";
+            playbackStatusText.text = "Paused";
             playbackStatusText.color = Color.yellow;
         }
 
@@ -322,14 +445,14 @@ public class VRVideoPlayer : MonoBehaviour
         isPlaying = true;
         isInitialized = true;
 
-        Debug.Log("视频开始播放: " + source.url);
+        Debug.Log("Video started: " + source.url);
     }
 
     private void OnVideoError(VideoPlayer source, string message)
     {
         isPlaying = false;
         isInitialized = false;
-        Debug.LogError("视频播放错误: " + message);
+        Debug.LogError("Video playback error: " + message);
     }
 
     private void OnDestroy()
@@ -377,3 +500,4 @@ public class VRVideoPlayer : MonoBehaviour
         return isInitialized;
     }
 }
+
