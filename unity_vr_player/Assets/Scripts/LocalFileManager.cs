@@ -214,7 +214,7 @@ public class LocalFileManager : MonoBehaviour
 
         if (denied && !deniedDontAskAgain)
         {
-            deniedDontAskAgain = !Permission.ShouldShowRequestPermissionRationale(permission);
+            deniedDontAskAgain = !ShouldShowPermissionRationale(permission);
         }
 
         if (deniedDontAskAgain)
@@ -223,8 +223,32 @@ public class LocalFileManager : MonoBehaviour
         }
     }
 
+    private static bool ShouldShowPermissionRationale(string permission)
+    {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (string.IsNullOrWhiteSpace(permission))
+        {
+            return false;
+        }
+
+        try
+        {
+            AndroidJavaClass unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
+            AndroidJavaObject activity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity");
+            return activity.Call<bool>("shouldShowRequestPermissionRationale", permission);
+        }
+        catch
+        {
+            return true;
+        }
+#else
+        return true;
+#endif
+    }
+
     public void OpenAppPermissionSettings()
     {
+#if UNITY_ANDROID && !UNITY_EDITOR
         try
         {
             AndroidJavaClass unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
@@ -243,12 +267,8 @@ public class LocalFileManager : MonoBehaviour
         {
             Debug.LogWarning("Failed to open app settings: " + e.Message);
         }
-    }
-#else
-    public void OpenAppPermissionSettings()
-    {
-    }
 #endif
+    }
 
     public void OpenFilePicker()
     {
