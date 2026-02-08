@@ -38,3 +38,11 @@ Last Updated: 2026-02-08
 - [x] R-003 covered in code.
 - [x] R-004 covered in code.
 - [x] R-005 covered in process/file.
+
+## Round Validation (2026-02-08)
+
+- Commit: `7df76ca`
+- CI build: `https://github.com/qhwen/vrplayer/actions/runs/21797566828` (success)
+- Built APK: `downloads/VRVideoPlayer.apk`
+- Manifest permission check: contains `READ_MEDIA_VIDEO`, `READ_MEDIA_VISUAL_USER_SELECTED`, and legacy `READ_EXTERNAL_STORAGE` (maxSdkVersion=32).
+- Note: popup timing and touch interaction require real-device verification; CI can only validate build/package integrity.
