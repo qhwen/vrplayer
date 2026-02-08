@@ -225,7 +225,6 @@ public class LocalFileManager : MonoBehaviour
 
     private static bool ShouldShowPermissionRationale(string permission)
     {
-#if UNITY_ANDROID && !UNITY_EDITOR
         if (string.IsNullOrWhiteSpace(permission))
         {
             return false;
@@ -241,14 +240,10 @@ public class LocalFileManager : MonoBehaviour
         {
             return true;
         }
-#else
-        return true;
-#endif
     }
 
     public void OpenAppPermissionSettings()
     {
-#if UNITY_ANDROID && !UNITY_EDITOR
         try
         {
             AndroidJavaClass unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
@@ -267,8 +262,17 @@ public class LocalFileManager : MonoBehaviour
         {
             Debug.LogWarning("Failed to open app settings: " + e.Message);
         }
-#endif
     }
+#else
+    private static bool ShouldShowPermissionRationale(string permission)
+    {
+        return true;
+    }
+
+    public void OpenAppPermissionSettings()
+    {
+    }
+#endif
 
     public void OpenFilePicker()
     {
