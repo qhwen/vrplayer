@@ -12,7 +12,7 @@ jobs:
   build-android:
     name: Build Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -26,8 +26,19 @@ jobs:
           restore-keys: |
             Library-Android-
 
+      - name: Install Unity Hub
+        run: |
+          sudo mkdir -p /usr/share/keyrings
+          wget -qO - https://hub.unity3d.com/linux/keys/public | gpg --dearmor | sudo tee /usr/share/keyrings/Unity_Technologies_ApS.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/Unity_Technologies_ApS.gpg] https://hub.unity3d.com/linux/repos/deb stable main" | sudo tee /etc/apt/sources.list.d/unityhub.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends unityhub
+          /opt/unityhub/unityhub --version || true
+
       - name: Activate Unity License
         uses: buildalon/activate-unity-license@v2
+        env:
+          UNITY_HUB_PATH: /opt/unityhub/unityhub
         with:
           license: Personal
           username: ${{ secrets.UNITY_USERNAME }}
