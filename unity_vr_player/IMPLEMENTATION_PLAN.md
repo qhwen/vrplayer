@@ -1,645 +1,322 @@
-# Unity VR视频播放器 - 实施方案
+# Unity VR视频播放器 - 实施计划（任务拆分版）
 
-## 项目概述
+## 1. 计划目标
 
-使用 Unity 2022.3+ 开发多端 VR 视频播放器，支持 Windows、iOS、Android，集成 WebDAV 和本地文件播放。
+本计划采用“按任务内容拆分”的方式推进，不按天拆分。
 
----
+核心目标：
+1. 在**本机不安装 Unity**前提下，通过云端流水线稳定产出 Android APK。
+2. 先交付 Android MVP（本地播放 + WebDAV 下载播放 + 基础 VR 交互）。
+3. 建立可扩展架构，为后续 iOS/Windows 扩展保留边界。
 
-## 核心技术决策
+## 2. 约束与原则
 
-### 1. VR框架选择
-**推荐：** OpenXR（跨平台标准）
+### 2.1 约束
+- 本地开发机不安装 Unity Editor。
+- 构建环境在云端（优先 Unity Build Automation，备选 GitHub Actions + Unity License）。
+- 当前仓库不是完整 Unity 工程，需要先补齐工程骨架。
 
-| 框架 | 优势 | 劣势 | 推荐度 |
-|------|------|--------|---------|
-| **OpenXR** | ✅ 标准化<br>✅ 跨平台<br>✅ 未来主流 | ⚠️ 新，文档少 | ⭐⭐⭐⭐⭐ |
-| OpenVR (SteamVR) | ✅ 成熟<br>✅ 文档多 | ⚠️ VR Only<br>⚠️ 非VR模式需另做 | ⭐⭐⭐⭐ |
-| Oculus SDK | ✅ 优化好<br>✅ 功能全 | ❌ 仅Oculus<br>❌ 需要多套代码 | ⭐⭐⭐ |
-| Cardboard | ✅ 轻量<br>✅ 入门级 | ❌ 功能有限<br>❌ 非VR设备不支持 | ⭐⭐ |
+### 2.2 实施原则
+- 先跑通构建链路，再堆功能。
+- 先 Android MVP，再扩平台。
+- 业务分层，避免 UI 直接耦合底层协议。
+- 每个任务包必须有“交付物 + 验收标准”。
 
-**最终选择：** **OpenXR + Cardboard兼容模式**
+## 3. MVP 范围定义
 
-### 2. 视频播放方式
-**推荐：** Unity Video Player + RenderTexture
+### 3.1 包含范围（In Scope）
+- Android APK 云端构建、签名、产物归档。
+- 本地视频播放（MP4 优先）。
+- WebDAV 文件浏览、下载到本地缓存、播放缓存文件。
+- 360 球幕渲染 + 基础视角控制（拖拽/陀螺仪二选一的可用实现）。
+- 基础播放 UI（播放/暂停、进度、时长、错误提示）。
 
-| 方式 | 优势 | 劣势 |
-|------|------|--------|
-| **Unity VideoPlayer** | ✅ 内置<br>✅ 跨平台<br>✅ 简单 | ⚠️ 格式支持有限<br>⚠️ 性能中等 |
-| **AVPro Video** | ✅ 性能强<br>✅ 格式全<br>✅ 功能多 | ❌ 收费($95)<br>❌ 依赖量大 | |
-| **自定义 FFmpeg** | ✅ 完全控制<br>✅ 格式全 | ❌ 开发复杂<br>❌ 需要插件 |
+### 3.2 不包含范围（Out of Scope）
+- Quest/Pico 深度 SDK 适配。
+- 多平台一次性交付（iOS/Windows 在 MVP 后单独任务包）。
+- 高级能力（字幕、多音轨、倍速、播放历史同步）。
 
-**第一阶段选择：** **Unity VideoPlayer**（快速原型）
-**长期优化：** 评估 AVPro Video（如需更强性能）
+## 4. 目标架构（MVP）
 
-### 3. UI框架选择
-**推荐：** Unity UI Toolkit (2022+)
+建议分层：
 
-| 框架 | 优势 | 推荐度 |
-|------|------|---------|
-| Unity UI Toolkit | ✅ 新标准<br>✅ 性能好<br>✅ CSS样式 | ⭐⭐⭐⭐⭐ |
-| uGUI | ✅ 成熟<br>✅ 教程多 | ⭐⭐⭐ |
-| NGUI | ❌ 需购买<br>❌ 不推荐 | ⭐ |
+1. `Presentation`：UI 与交互编排。  
+2. `Application`：播放用例、下载用例、状态流转。  
+3. `Domain`：接口与实体（`IVideoSource`、`VideoItem`、`PlaybackState`）。  
+4. `Infrastructure`：Local/WebDAV/Android 插件/文件系统实现。  
+5. `Platform`：Android 权限、文件选择、构建与签名配置。  
 
-**选择：** **Unity UI Toolkit**（项目长远考虑）
+关键接口（MVP 必需）：
+- `IVideoSource.ListAsync(path)`
+- `IVideoSource.DownloadAsync(remote, local, progress)`
+- `IPlaybackService.Open(uri)` / `Play()` / `Pause()` / `Seek()`
+- `ICacheService.GetPath(key)` / `Exists(key)` / `Evict()`
 
-**第一阶段方案：** **uGUI**（快速实现，教程多）
+## 5. 任务包拆分（Workstreams）
 
----
+## WS-01 工程基线与仓库重构
 
-## 详细实施步骤
+目标：把当前仓库从“文档+脚本草稿”升级为可编译 Unity 工程骨架。
 
-### Week 1: 项目初始化（2-3天）
+任务清单：
+- [ ] 建立标准 Unity 目录：`Assets/`、`Packages/`、`ProjectSettings/`。
+- [ ] 脚本迁移至 `Assets/Scripts/`，按层次分目录。
+- [ ] 新增 `Assets/Editor/BuildAndroid.cs` 作为唯一构建入口。
+- [ ] 清理/修复当前脚本中的编译阻塞点（协程、空指针判断、API 拼写、括号结构等）。
+- [ ] 增加基础 `.gitignore`（Unity 推荐模板）。
 
-#### Day 1-2: Unity项目搭建
-```bash
-# 安装 Unity 2022.3 LTS
-# 创建新项目
-Project Template: 3D (Core)
-Project Name: VRVideoPlayer
-Location: unity_vr_player/
+交付物：
+- 可被 Unity CLI 打开的工程结构。
+- 编译日志中无 C# 编译错误。
 
-# 项目结构设置
-Assets/
-├── Scripts/           # 所有C#脚本
-├── Scenes/           # 场景文件
-├── Prefabs/          # 预置体
-├── Materials/         # 材质
-├── Textures/          # 纹理
-└── Resources/          # 资源
-```
+验收标准：
+- `-batchmode -quit -projectPath ...` 可执行并完成脚本编译阶段。
 
-**配置项目设置：**
-- Player Settings → XR Plug-in Management → 勾选 OpenXR
-- Player Settings → XR Plug-in Management → Cardboard XR Plugin (兼容模式)
-- Player Settings → Resolution and Scaling → Target 1920x1080
-- Player Settings → Other Settings → Auto Graphics API → Vulkan (Windows)、Metal (iOS/Mac)
-
-**关键检查点：**
-- [ ] OpenXR Plugin 已导入
-- [ ] 项目能编译到目标平台
-- [ ] 基础场景能运行
+依赖：无（最优先）。
 
 ---
 
-#### Day 2-3: 基础场景创建
-```
-创建场景：
-1. VideoPlayerScene.unity（主播放器场景）
-2. SettingsScene.unity（设置场景）
-3. MainMenuScene.unity（主菜单场景）
+## WS-02 云端构建链路（不安装本机 Unity）
 
-场景内容：
-- Main Camera (带 XR Origin 组件)
-- Directional Light
-- 空的GameObject作为根节点
-- EventSystem (用于UI交互)
-```
+目标：在云端稳定输出 APK。
 
-**关键配置：**
-- Camera → Clear Flags → Solid Color (黑色背景)
-- XR Origin → Camera Offset → Y=1.6 (模拟人眼高度)
+实施策略：
+- 主路径：Unity Build Automation（UBA）。
+- 备选路径：GitHub Actions + Unity Builder（需要 License 和 Android 签名密钥）。
 
----
+任务清单：
+- [ ] 修正工作流触发分支与当前仓库一致（`master`/tag/manual）。
+- [ ] 替换不可用的“手工拼工程”流程为“真实工程 + Unity 构建入口脚本”。
+- [ ] 配置 Android keystore secrets（base64、alias、password）。
+- [ ] 输出构建日志与 APK Artifact。
+- [ ] 增加失败分类（License、SDK、编译、签名）与提示。
 
-### Week 2: 核心播放器（5-7天）
+交付物：
+- 可复用构建流水线配置（YAML 或 UBA 配置）。
+- 成功产出的 debug/release APK。
 
-#### Day 4-6: 360°球体渲染
-```
-创建 SkySphere 预置：
-1. 创建 Sphere (半径 50)
-2. 创建 Material (Shader: Unlit/Texture)
-3. 配置球体：
-   - Scale: (-1, 1, 1) - 反转X轴使视频正确显示
-   - Rotation: (0, 0, 0)
-   - Culling Mask: Nothing
-```
+验收标准：
+- 连续 3 次触发均成功产出 APK。
+- 产物可安装到 Android 真机。
 
-**技术要点：**
-```csharp
-// 反转球体X轴（视频纹理在内部，需要翻转）
-skySphere.transform.localScale = new Vector3(-1, 1, 1) * 50;
-```
-
-**检查点：**
-- [ ] 360°视频能正确显示
-- [ ] 无明显变形
-- [ ] 性能流畅 (>30fps)
+依赖：WS-01。
 
 ---
 
-#### Day 6-7: 视频播放脚本
-```
-实现 VRVideoPlayer.cs 核心功能：
+## WS-03 播放内核（Playback Core）
 
-必需功能：
-1. VideoPlayer 初始化
-   - videoPlayer = gameObject.AddComponent<VideoPlayer>()
-   - videoPlayer.url = path
-   - videoPlayer.prepare()
+目标：构建稳定播放状态机，避免 UI 和底层播放器直接耦合。
 
-2. RenderTexture 更新
-   - renderTexture = new RenderTexture(1920, 1080)
-   - Graphics.Blit(videoPlayer.texture, renderTexture)
-   - sphereMaterial.mainTexture = renderTexture
+任务清单：
+- [ ] 封装 `IPlaybackService`（Open/Play/Pause/Stop/Seek/Volume）。
+- [ ] 建立播放状态机（Idle/Preparing/Ready/Playing/Paused/Error）。
+- [ ] 实现事件回调（进度、时长、错误、缓冲）。
+- [ ] 统一异常转换（文件不存在、格式不支持、解码失败）。
 
-3. 播放控制
-   - PlayVideo(string path)
-   - PauseVideo()
-   - ResumeVideo()
-   - StopVideo()
-   - SetVolume(float)
-   - SeekTo(float seconds)
+交付物：
+- 播放服务实现与状态模型。
+- 可被 UI 订阅的状态输出。
 
-4. VR旋转控制
-   - headYaw, headPitch 变量
-   - SetVRRotation(float yaw, float pitch)
-   - SmoothHeadTracking() (插值)
-```
+验收标准：
+- 本地 MP4 可完整播放，暂停/继续/跳转可用。
+- 播放失败可返回明确错误码。
 
-**检查点：**
-- [ ] 视频能正常加载和播放
-- [ ] 播放/暂停功能正常
-- [ ] 音量控制有效
-- [ ] 进度跳转准确
+依赖：WS-01。
 
 ---
 
-#### Day 7-9: VR头部追踪
-```
-实现头部追踪：
+## WS-04 VR 渲染与交互
 
-方案A - 输入管理器（推荐）：
-1. 创建 XRInputManager.cs
-2. 使用 OpenXR Input Subsystem
-3. 监听头部旋转：
-   InputAction positionAction
-   InputAction rotationAction
+目标：完成可用的 360 播放体验。
 
-方案B - 陀螺仪（简单）：
-1. 使用 Input.gyro.attitude (Unity内置)
-2. 应用到VR旋转
+任务清单：
+- [ ] Sphere + 材质 + RenderTexture 映射链路。
+- [ ] 视角控制（优先触控拖拽，陀螺仪为增强项）。
+- [ ] 旋转范围限制与平滑插值。
+- [ ] 场景初始化与资源释放（防止内存泄漏）。
 
-推荐：方案A（OpenXR）
-```
+交付物：
+- 可在 Android 设备中查看 360 内容的场景。
 
-**检查点：**
-- [ ] 头部旋转能实时控制视角
-- [ ] 旋转平滑（无明显抖动）
-- [ ] 角度范围合理（-180°~180°）
+验收标准：
+- 1080p 360 视频播放时无明显撕裂。
+- 手势旋转可控，无严重抖动或反向。
+
+依赖：WS-03。
 
 ---
 
-#### Day 9-11: UI系统实现
-```
-使用 uGUI 创建控制面板：
+## WS-05 UI 与应用编排层
 
-1. 创建 Canvas (Screen Space - Overlay)
-2. 添加控制元素：
-   - Play/Pause 按钮
-   - Stop 按钮
-   - 进度条 Slider
-   - 时间显示 Text
-   - 音量按钮 (+/-)
-   - VR模式开关
+目标：提供可用的播放器界面和用户反馈。
 
-3. VRUIManager.cs 管理
-   - 按钮事件绑定
-   - UI显示更新
-   - 与VRVideoPlayer通信
-```
+任务清单：
+- [ ] 播放控制 UI（播放/暂停、进度条、时长、返回）。
+- [ ] 状态提示 UI（加载中、错误、下载进度）。
+- [ ] UI 仅依赖应用层接口，不直连协议实现。
+- [ ] 建立最小导航（播放器页 / 文件页 / 设置页）。
 
-**检查点：**
-- [ ] UI显示正常（不遮挡视频）
-- [ ] 按钮响应灵敏
-- [ ] 时间显示准确
-- [ ] 支持手柄输入（如果可用）
+交付物：
+- MVP UI 场景与交互逻辑。
+
+验收标准：
+- 用户可独立完成“选视频 -> 播放 -> 暂停/拖动进度 -> 退出”。
+
+依赖：WS-03。
 
 ---
 
-### Week 3: WebDAV集成（3-4天）
+## WS-06 本地数据源与缓存服务
 
-#### Day 12-14: WebDAV连接管理
-```
-实现 WebDAVManager.cs：
+目标：本地文件与缓存能力可独立复用。
 
-核心功能：
-1. 连接测试
-   - Connect(string url, string user, string pass)
-   - Basic Authentication (Base64)
+任务清单：
+- [ ] 实现 `LocalVideoSource`（扫描、读取、过滤视频格式）。
+- [ ] 实现 `CacheService`（路径管理、容量统计、清理策略）。
+- [ ] 统一路径规范（Android 使用 `persistentDataPath`）。
+- [ ] 建立缓存命名规则（hash 或安全文件名映射）。
 
-2. 文件列表
-   - ListFiles(string path)
-   - PROPFIND 方法 (WebDAV协议)
-   - XML解析响应
+交付物：
+- 本地数据源与缓存服务实现。
 
-3. 文件下载
-   - DownloadFile(string remote, string local)
-   - UnityWebRequest 异步下载
-   - 进度回调
+验收标准：
+- 本地文件列表可展示。
+- 下载缓存文件可被播放器稳定打开。
 
-4. 配置保存
-   - PlayerPrefs 保存服务器信息
-   - 加载时自动连接
-```
-
-**关键代码：**
-```csharp
-// Basic Authentication
-string auth = "Basic " + System.Convert.ToBase64String(
-    System.Text.Encoding.UTF8.GetBytes(username + ":" + password)
-);
-request.SetRequestHeader("Authorization", auth);
-```
-
-**检查点：**
-- [ ] 能成功连接到WebDAV服务器
-- [ ] 能获取文件列表
-- [ ] 能下载文件到本地
-- [ ] 进度显示准确
+依赖：WS-01、WS-03。
 
 ---
 
-#### Day 15-17: 本地文件管理
-```
-实现 LocalFileManager.cs：
+## WS-07 WebDAV 数据源
 
-核心功能：
-1. 文件选择器
-   - Windows: FileOpenDialog
-   - Android: 原生插件
-   - iOS: 原生插件
+目标：实现与具体 WebDAV 服务解耦的远端数据能力。
 
-2. 本地缓存管理
-   - GetCacheDirectory()
-   - GetLocalVideos()
-   - AddLocalVideo(path)
-   - DeleteLocalVideo(path)
-   - ClearAllCache()
+任务清单：
+- [ ] 实现 `WebDavVideoSource`，对齐 `IVideoSource`。
+- [ ] PROPFIND XML 解析改为标准 XML 解析器（非字符串拼切）。
+- [ ] Basic Auth 与连接测试。
+- [ ] 下载进度回调与失败重试（MVP 一次重试即可）。
+- [ ] Nextcloud/ownCloud 兼容测试。
 
-3. 缓存路径设置
-   - Application.persistentDataPath/VRVideos/ (移动端)
-   - Application.dataPath/VRVideos/ (桌面端)
-```
+交付物：
+- WebDAV 文件浏览 + 下载 + 播放完整链路。
 
-**关键点：**
-- 文件选择器需要平台原生插件
+验收标准：
+- 连接成功率稳定。
+- 下载后文件校验通过并可播放。
 
-**移动端插件示例（Android）：**
-```java
-// Android/iOS 需要原生插件调用系统文件选择器
-```
-
-**检查点：**
-- [ ] 能选择本地视频文件
-- [ ] 本地播放正常
-- [ ] 缓存管理正确
-- [ ] 文件删除有效
+依赖：WS-03、WS-06。
 
 ---
 
-### Week 4: 平台构建（3-4天）
+## WS-08 Android 平台适配
 
-#### Day 18-19: Windows构建
-```
-Windows 平台配置：
+目标：补齐 Android 侧能力与权限模型。
 
-1. Player Settings:
-   - Platform: PC, Mac & Linux Standalone
-   - Architecture: x86_64
-   - Scripting Backend: IL2CPP
+任务清单：
+- [ ] Manifest 权限最小化配置（按 Android 版本分支处理）。
+- [ ] 文件选择方案：先固定目录，后接 SAF 插件。
+- [ ] 横屏/沉浸模式设置。
+- [ ] Release 签名配置与版本号策略（versionCode/versionName）。
 
-2. 构建设置:
-   - Build Settings → Build
-   - Target Platform: Windows
-   - Development Build: (调试时勾选)
+交付物：
+- 可安装、可运行、可授权的 Android 包。
 
-3. 生成文件:
-   - VRVideoPlayer.exe (可执行)
-   - VRVideoPlayer_Data/ (资源文件夹)
+验收标准：
+- Android 10+ 与 13+ 设备均可完成播放主流程。
 
-4. 文件关联:
-   - 在设置中注册.mp4文件关联
-```
-
-**测试清单：**
-- [ ] .exe能正常启动
-- [ ] VR设备检测正常
-- [ ] 视频播放流畅
-- [ ] 窗口模式/全屏切换正常
+依赖：WS-02、WS-05、WS-06、WS-07。
 
 ---
 
-#### Day 20-21: iOS构建
-```
-iOS 平台配置：
+## WS-09 质量保障与测试
 
-1. Player Settings:
-   - Platform: iOS
-   - Target Device: iPhone + iPad
-   - Architecture: ARM64
-   - Minimum iOS Version: 11.0
+目标：把“能跑”提升为“可持续交付”。
 
-2. iOS 专有设置:
-   - Camera Usage Description: 需要用于VR
-   - Photo Library Usage Description: 用于文件访问
+任务清单：
+- [ ] 建立最小测试矩阵：格式、分辨率、网络条件、设备版本。
+- [ ] 核心模块测试：WebDAV 解析、路径映射、状态机转换。
+- [ ] 引入冒烟脚本（构建后自动做基础校验）。
+- [ ] 统一日志规范（含错误码）。
 
-3. 构建流程:
-   - Build Settings → Build
-   - 生成 .xcodeproj
+交付物：
+- 测试报告模板 + 每次构建附带结果。
 
-4. Xcode 配置:
-   - 打开生成的Xcode项目
-   - 添加 Info.plist 权限
-   - 编译并生成 .ipa
+验收标准：
+- 核心链路回归可重复。
+- 关键缺陷可定位到模块与错误码。
 
-5. 测试:
-   - 在真机或模拟器测试
-   - TestFlight分发
-```
-
-**关键权限：**
-```xml
-<!-- Info.plist -->
-<key>NSPhotoLibraryUsageDescription</key>
-<string>需要访问相册选择视频文件</string>
-
-<key>NSPhotoLibraryAddUsageDescription</key>
-<string>需要保存视频文件到相册</string>
-```
+依赖：WS-03 之后持续进行。
 
 ---
 
-#### Day 22-23: Android构建
-```
-Android 平台配置：
+## WS-10 发布与运维
 
-1. Player Settings:
-   - Platform: Android
-   - Minimum API Level: 21 (Android 5.0)
-   - Target API Level: 33 (Android 13)
+目标：形成可复用发布流程和问题响应机制。
 
-2. Android 专有设置:
-   - Graphics APIs: OpenGLES 3.0 / Vulkan
-   - Auto Graphics API: Vulkan
+任务清单：
+- [ ] 建立 release 流程（tag 触发、变更日志、产物归档）。
+- [ ] 维护发布清单（已知限制、设备兼容性、安装说明）。
+- [ ] 设立 issue 模板（Bug/构建失败/功能请求）。
+- [ ] 输出运行手册（如何触发构建、如何替换签名、如何回滚）。
 
-3. 构建设置:
-   - Build Settings → Build
-   - Build System: Gradle
-   - Export Project: (如果需要自定义配置)
+交付物：
+- MVP 发布包 + 发布文档。
 
-4. AndroidManifest.xml:
-   - 添加存储权限
-   - 添加相机权限（如果需要）
+验收标准：
+- 新成员可仅依赖文档复现一次完整发布。
 
-5. 签名:
-   - Debug Build: 使用调试keystore
-   - Release Build: 使用发布keystore
+依赖：WS-02~WS-09。
 
-6. 生成文件:
-   - .apk (用于测试)
-   - .aab (用于发布到Play Store)
-```
+## 6. 任务执行顺序与里程碑（按内容）
 
-**关键权限：**
-```xml
-<!-- AndroidManifest.xml -->
-<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
-<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
-<uses-permission android:name="android.permission.CAMERA"/>
-```
+### Milestone A：构建链路打通
+- 包含：WS-01 + WS-02（最小可安装 APK）。
+- 通过标准：云端稳定产出 APK。
 
----
+### Milestone B：本地播放 MVP
+- 包含：WS-03 + WS-04 + WS-05 + WS-06。
+- 通过标准：本地视频可在 VR 场景播放与控制。
 
-### Week 5: 测试优化（2-3天）
+### Milestone C：WebDAV MVP
+- 包含：WS-07 + WS-08。
+- 通过标准：WebDAV 浏览、下载、缓存播放打通。
 
-#### Day 24-26: 跨平台测试
-```
-测试矩阵：
+### Milestone D：发布就绪
+- 包含：WS-09 + WS-10。
+- 通过标准：有签名 release 包、测试报告和发布文档。
 
-视频格式测试:
-- [ ] MP4 (H.264)
-- [ ] MP4 (H.265)
-- [ ] MKV
-- [ ] MOV
+## 7. Definition of Done（DoD）
 
-分辨率测试:
-- [ ] 1080p (1920x1080)
-- [ ] 1440p (2560x1440)
-- [ ] 4K (3840x2160)
+每个任务包完成必须同时满足：
+1. 代码合入主分支并通过 CI。  
+2. 有对应文档更新（配置或使用说明）。  
+3. 有可验证的验收记录（日志、截图、测试结果）。  
+4. 无阻塞级缺陷（崩溃、无法安装、主流程中断）。  
 
-VR设备测试:
-- [ ] PC VR (Oculus Rift / HTC Vive)
-- [ ] 移动VR (Oculus Quest / Pico)
-- [ ] Cardboard (入门级)
+## 8. 主要风险与应对
 
-WebDAV测试:
-- [ ] Nextcloud
-- [ ] ownCloud
-- [ ] 坚果云
+1. Unity License/云构建配置失败。  
+应对：先做最小场景构建验证，再引入业务代码。
 
-测试设备:
-- Windows 10/11
-- iOS 14+/15+
-- Android 10+/13+
-```
+2. Android 文件选择兼容性复杂。  
+应对：MVP 先固定目录，SAF 作为后置增强。
+
+3. WebDAV 服务实现差异大。  
+应对：先锁 Nextcloud，再逐步扩 ownCloud/其他服务。
+
+4. 性能问题（高码率/高分辨率）。  
+应对：先 1080p 基线，后续再开高码率优化任务。
+
+## 9. MVP 后续扩展任务包
+
+1. iOS 构建与权限模型适配。  
+2. Windows 桌面模式与输入适配。  
+3. OpenXR 深度集成（头显/手柄）。  
+4. 高级功能（字幕、倍速、播放历史、收藏）。
 
 ---
 
-#### Day 27-28: 性能优化
-```
-性能优化检查点：
-
-渲染性能:
-- [ ] 帧率 > 30fps
-- [ ] Draw Call < 100
-- [ ] 内存 < 500MB
-- [ ] GPU 使用 < 80%
-
-加载性能:
-- [ ] 视频加载时间 < 5秒
-- [ ] 场景加载时间 < 2秒
-- [ ] WebDAV连接 < 3秒
-
-用户体验:
-- [ ] 头部旋转延迟 < 50ms
-- [ ] UI响应 < 100ms
-- [ ] 切换场景 < 1秒
-```
-
----
-
-## 风险评估与对策
-
-### 高风险
-| 风险 | 影响 | 对策 |
-|------|------|------|
-| **移动端文件选择器实现复杂** | Android/iOS需要原生插件 | Week 2预留3天开发插件 |
-| **WebDAV协议兼容性** | 不同服务实现可能不同 | 先测试主流服务，做适配层 |
-| **视频解码性能** | 4K/8K视频卡顿 | 提供分辨率选项，降级播放 |
-| **Unity跨平台Bug** | iOS/Android特定问题 | 每个平台独立测试 |
-
-### 中风险
-| 风险 | 影响 | 对策 |
-|------|------|------|
-| **360°视频畸变** | 球体渲染可能变形 | 使用高质量球体模型，调整UV映射 |
-| **头部追踪精度** | 陀螺仪噪声 | 添加低通滤波和插值 |
-| **内存泄漏** | 长时间运行崩溃 | 定期监控，及时释放资源 |
-
-### 低风险
-| 风险 | 影响 | 对策 |
-|------|------|------|
-| **UI设计** | 用户体验受影响 | 参考VR UI最佳实践 |
-| **跨平台UI差异** | 需要单独调整 | 建立UI抽象层 |
-
----
-
-## 里程碑与交付物
-
-### Milestone 1: MVP（Week 4结束）
-**交付物：**
-- [ ] Windows桌面版 .exe（可播放本地MP4）
-- [ ] Android .apk（可播放本地MP4）
-- [ ] 基础VR模式（360°视频+手势控制）
-- [ ] WebDAV基础连接
-
-**验收标准：**
-- 能播放本地视频文件
-- 360°视频能旋转
-- 基础UI控制正常
-- 三个平台能运行
-
----
-
-### Milestone 2: WebDAV集成（Week 5结束）
-**交付物：**
-- [ ] WebDAV服务器连接
-- [ ] WebDAV文件列表显示
-- [ ] WebDAV文件下载
-- [ ] 下载进度显示
-- [ ] 本地缓存管理
-
-**验收标准：**
-- 能连接到主流WebDAV服务
-- 能浏览文件目录
-- 能下载文件到本地
-- 缓存管理正常
-
----
-
-### Milestone 3: 完整产品（Week 6结束）
-**交付物：**
-- [ ] 完整VR体验（头部追踪）
-- [ ] 播放历史记录
-- [ ] 播放列表管理
-- [ ] 设置界面（WebDAV配置）
-- [ ] 性能优化
-- [ ] 所有平台测试通过
-
-**验收标准：**
-- VR体验流畅（>30fps）
-- 三个平台功能一致
-- 无严重Bug
-- 性能满足基本要求
-
----
-
-## 开发资源需求
-
-### 团队配置
-- Unity开发者：1人
-- 熟悉C#
-- 了解VR基本概念
-
-### 开发工具
-- Unity 2022.3 LTS（免费）
-- Visual Studio 2022（Windows开发）
-- Xcode 14+（iOS开发）
-- Android Studio（Android插件）
-- Git（版本控制）
-
-### 开发设备
-- Windows PC（开发+测试）
-- iOS设备（可选，用于真机测试）
-- Android设备（可选）
-- VR头显（可选，用于测试VR模式）
-
-### 第三方服务（测试用）
-- Nextcloud/ownCloud 实例
-- 公开视频源
-
----
-
-## 时间表
-
-```
-Week 1: ████████░░░░░░░░░ 20%  项目初始化
-Week 2: ████░░░░░░░░░░░░ 35%  核心播放器
-Week 3: ██████░░░░░░░░░ 25%  WebDAV集成
-Week 4: ██████░░░░░░░░░ 20%  平台构建
-Week 5: ████████████░░░░ 10%  测试优化
-         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
-```
-
-**总开发周期：** 5-6周
-**关键里程碑：**
-- Week 2结束：MVP可用（基础播放）
-- Week 3结束：WebDAV集成完成
-- Week 4结束：平台构建完成
-- Week 5结束：产品发布就绪
-
----
-
-## 下一步行动
-
-### 立即开始
-1. [ ] 创建Unity项目
-2. [ ] 创建基础场景
-3. [ ] 实现VRVideoPlayer.cs核心脚本
-4. [ ] 测试360°球体渲染
-
-### Week 2
-1. [ ] 实现UI系统
-2. [ ] 添加播放控制
-3. [ ] 实现基础头部追踪
-
-### Week 3
-1. [ ] 实现WebDAVManager
-2. [ ] 实现LocalFileManager
-3. [ ] 测试文件浏览和下载
-
-### Week 4
-1. [ ] 构建Windows版本
-2. [ ] 构建iOS版本
-3. [ ] 构建Android版本
-4. [ ] 跨平台测试
-
-### Week 5
-1. [ ] 性能优化
-2. [ ] Bug修复
-3. [ ] 用户体验改进
-4. [ ] 准备发布
-
----
-
-## 附录：参考资源
-
-### Unity官方文档
-- [Unity XR](https://docs.unity3d.com/Packages/com.unity.xr.openxr@latest)
-- [VideoPlayer](https://docs.unity3d.com/ScriptReference/VideoPlayer.html)
-- [UI Toolkit](https://docs.unity3d.com/Manual/UIElements.html)
-
-### VR SDK资源
-- [OpenXR](https://github.com/KhronosGroup/OpenXR-SDK-Unity)
-- [Oculus Integration](https://developer.oculus.com/documentation/unity/unity-overview)
-- [Cardboard XR Plugin](https://developers.google.com/vr/discover/cardboard)
-
-### WebDAV协议
-- [RFC 4918](https://tools.ietf.org/html/rfc4918)
-- [Nextcloud WebDAV](https://docs.nextcloud.com/server/stable/developer_manual/webdav)
-
----
-
-*方案版本：1.0*
-*创建日期：2026-02-07*
-*预估周期：5-6周*
+*计划版本：2.0（任务拆分版）*  
+*更新日期：2026-02-08*  
+*适用范围：Android MVP（本机不安装 Unity）*

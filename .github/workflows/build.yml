@@ -1,477 +1,67 @@
-name: Build Unity VR Player
+﻿name: Build Unity VR Player
 
 on:
   push:
-    branches: [ main ]
-    tags: ['v*']
-    workflow_dispatch:
-
-env:
-  UNITY_VERSION: 2022.3.4040f1
-  BUILD_TARGET: Android
+    branches:
+      - master
+    tags:
+      - v*
+  workflow_dispatch:
 
 jobs:
   build-android:
-    name: Build Android APK (No-Headless)
+    name: Build Android APK
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 60
+
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: Cache Unity Library
+      - name: Cache Library
         uses: actions/cache@v4
         with:
-          path: Library/
-          key: unity-library-${{ runner.os }}
+          path: unity_vr_player/Library
+          key: Library-Android-${{ hashFiles('unity_vr_player/Packages/manifest.json', 'unity_vr_player/ProjectSettings/ProjectVersion.txt') }}
+          restore-keys: |
+            Library-Android-
 
-      - name: Setup Unity Hub
-        run: |
-          echo "Setting up Unity Hub..."
-          
-          # 下载 Unity Hub（Linux 版本）
-          wget -q https://download.unity3d.com/download_unity/9283c8d2a24d54798b0181bc26/UnityHub.AppImage -o UnityHub.AppImage
-          chmod +x UnityHub.AppImage
+      - name: Build Android
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: unity_vr_player
+          unityVersion: 2022.3.40f1
+          targetPlatform: Android
+          buildMethod: BuildAndroid.PerformBuild
+          androidAppBundle: false
+          androidKeystoreName: user.keystore
+          androidKeystoreBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          androidKeystorePass: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          androidKeyaliasName: ${{ secrets.ANDROID_KEYALIAS_NAME }}
+          androidKeyaliasPass: ${{ secrets.ANDROID_KEYALIAS_PASS }}
+          customParameters: -logFile /github/workspace/unity-build.log
 
-          # 显示 Unity Hub 版本
-          ./UnityHub.AppImage --version
-
-          # 列出已安装的 Unity 版本
-          ./UnityHub.AppImage install --list
-
-      - name: Install Unity Editor (CLI)
-        run: |
-          echo "Installing Unity Editor ${{ env.UNITY_VERSION }}..."
-          
-          # 使用 Unity Hub 命令行安装
-          ./UnityHub.AppImage install --version ${{ env.UNITY_VERSION }} --location /unity/${{ env.UNITY_VERSION }} --module Android --module Android-Support-for-Editor --module iOS
-
-      - name: Create Unity Project
-        run: |
-          echo "Creating Unity project structure..."
-          
-          # 创建项目配置
-          mkdir -p Assets/Scripts
-          mkdir -p Assets/Scenes
-          mkdir -p Assets/Plugins/Android/res/values
-          mkdir -p Assets/Resources
-          mkdir -p ProjectSettings
-
-      - name: Create Android Plugin
-        run: |
-          echo "Creating Android plugin files..."
-          
-          # AndroidManifest.xml
-          cat > Assets/Plugins/Android/AndroidManifest.xml << 'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.weisi.vrplayer">
-              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
-              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
-              <uses-permission android:name="android.permission.INTERNET"/>
-              <application android:label="@string/app_name" android:hardwareAccelerated="true" android:isGame="true">
-                  <meta-data android:name="com.samsung.android.vr.application.mode" android:value="vr_only"/>
-                  <meta-data android:name="com.google.android.vr.mode" android:value="cardboard"/>
-              </application>
-          </manifest>
-          EOF
-
-          # strings.xml
-          cat > Assets/Plugins/Android/res/values/strings.xml << 'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <string name="app_name">VR Video Player</string>
-          </resources>
-          EOF
-
-      - name: Create Unity Project Settings
-        run: |
-          echo "Creating Unity project settings..."
-          
-          # 创建 ProjectSettings/ProjectSettings.asset
-          python3 << 'PYTHON'
-          import yaml
-          
-          project_settings = {
-              "m_ObjectHideFlags": 0,
-              "m_Scenes": [],
-              "m_SceneSettings": [],
-              "m_ProjectConfigVersion": 1
-          }
-          
-          with open('ProjectSettings/ProjectSettings.asset', 'w') as f:
-              f.write('%YAML 1.1\n%TAG !u! tag:unity3d.com,2011:\n')
-              f.write('---UnityEditorBuildSettings:\n')
-              f.write('  enabledPlatforms: 0\n')
-              f.write('  deferredRadianceBackends:\n')
-              f.write('  m_Metadata:\n')
-              f.write('    platformTag:\n')
-              f.write('  AndroidPlatformSettings:\n')
-              f.write('    buildSystem: GRADLE\n')
-              f.write('    productCompanyName: Weisi\n')
-              f.write('    productName: VRVideoPlayer\n')
-              f.write('    architecture: ARM64\n')
-              f.write('    targetArchitectures:\n')
-              f.write('    - ARM64\n')
-              f.write('    AndroidTargetDevices:\n')
-              f.write('    - Android\n')
-              f.write('    AndroidMinSdkVersion: 29\n')
-              f.write('    AndroidTargetSdkVersion: 33\n')
-              f.write('    AndroidPreferredInstallLocation: internal\n')
-              f.write('    AndroidEnableProfile: 0\n')
-              f.write('    AndroidUseCustomKeystore: 0\n')
-              f.write('    AndroidBuildApkCompression: Lzma\n')
-              f.write('    AndroidStripUnusedCode: 1\n')
-              f.write('    AndroidValidateSize: 0\n')
-              f.write('---\n')
-          PYTHON
-
-      - name: Create Simple C# Script
-        run: |
-          echo "Creating minimal C# script for build..."
-          
-          cat > Assets/Scripts/BuildTest.cs << 'EOF'
-          using UnityEngine;
-          
-          public class BuildTest : MonoBehaviour {
-              void Start() {
-                  Debug.Log("Unity VR Player - Build Successful");
-              }
-          }
-          EOF
-
-      - name: Create Basic Scene
-        run: |
-          echo "Creating minimal scene file..."
-          
-          cat > Assets/Scenes/MainScene.unity << 'EOF'
-          %YAML 1.1
-          %TAG !u! tag:unity3d.com,2018:
-          ---!u! &1
-          m_ObjectHideFlags: 0
-          m_Name: MainScene
-          m_TagString: Untagged
-          m_PrefabInstance: {fileID: 0}
-          m_SceneGUID: 00000000000000000000000000000000
-          m_SceneBindings:
-          m_Parent: {fileID: 0}
-          m_Childrens: []
-          m_RootGameObject: {fileID: 0}
-          ---!u! &1
-          m_Icon: {instanceID: 0}
-          m_NavigationArea: {instanceID: 0}
-          m_NavigationAreas: []
-          ---!u! &1
-          m_AgentType: 0
-          m_BuildSettings:
-            m_AllowDebugBuild: 0
-            m_AllowDevelopmentBuild: 1
-            m_AllowAutoRefresh: 0
-            m_Enabled: 1
-            m_DynamicDepthBaking: 1
-            m_GISMode: 0
-            m_LightingMode: 0
-            m_GraphicsJobs:
-            - m_Enable: 1
-            m_Settings:
-            - m_UnityVersion: 2022.3
-              m_UnityLTSVersion: 2022.3
-              m_TargetPlatform: 26
-              m_TargetPlatformID: 6
-              m_StereoRenderingPath:
-              - m_GenerateMipmap: 0
-                m_EnableRealtimeMipmapGeneration: 0
-                m_EnableStreamingMipmap: 0
-            m_GraphicsJobMode: 0
-            m_GPUInstancing: 0
-            m_GPUComputeInstancing: 0
-            m_MSTreeQuality: 2
-            m_BestTreeQuality: 0
-            m_MSTreeCost: 1
-            m_SkinWeights: 0
-            m_MSTreeResolution: 2
-            m_GITreeCost: 1
-            m_GITreeResolution: 2
-          - m_AudioSettings:
-            - m_AudioMixerSize: 1024
-              m_DisableAudio: 0
-              m_SpatializerPlugin:
-              - m_SpatializerCount: 1
-                - m_SpatializerName:
-                  - m_Object:
-                    m_InstanceID: 0
-                    m_ClassID: 0
-                    m_CacheID: 0
-                  m_PrefabInstance: {fileID: 0}
-                  m_PrefabAsset: {fileID: 0}
-                  m_Name: HRTF Spatializer
-                  m_Device: HRTF
-                  m_OutputSampleRate: 44100
-                  m_HRTFVersion: 1
-                  m_HRTFTSize: 128
-                  m_HRTFSize: 16
-                  m_HRTFTSize: 32
-                  m_HRTFTSize: 64
-                  m_HRTFMinFrameSize: 1
-                  m_HRTFMaxFrameSize: 64
-                  m_HRTFTSizeType: PowerOfTwo
-                  m_HRTFPath: 
-                  m_HRTFDatasetSuffix: 
-                  m_HRTFChannelMap: 
-            - m_AudioSpatializer: 0
-          - m_ProgressiveLightmapRuntimeStaticBatching: 1
-          - m_DXRRuntime: 0
-          - m_HoloLensRemotingAvailable: 0
-          - m_WindowsHolographicRemotingEnabled: 0
-          - m_OptimizedFramePacing: 1
-          - m_LegacyClampBlendShapeWeights: 0
-          - m_PlayerSettings: []
-          - m_ActivePlayerSettings: []
-          - m_VROptimized: 1
-          - m_AndroidVR: 0
-          - m_AppleVR: 0
-          - m_GraphicsAPIs:
-          - m_UnityGLESv1: 0
-            m_AndroidSelected: 0
-            m_AndroidMinVersion: 1
-          - m_UnityGLESv2: 0
-            m_AndroidSelected: 0
-            m_AndroidMinVersion: 1
-          - m_UnityVulkan: 0
-            m_AndroidSelected: 0
-            m_AndroidMinVersion: 1
-          - m_UnityMetal: 1
-            m_MacSelected: 1
-            m_MacMinVersion: 0
-          - m_UnityDirect3D11: 0
-            m_WindowsSelected: 1
-            m_WindowsMinVersion: 1
-          - m_UnityDirect3D12: 0
-            m_WindowsSelected: 1
-            m_WindowsMinVersion: 1
-          - m_UnityDirect3D12_9: 0
-            m_WindowsSelected: 1
-            m_WindowsMinVersion: 1
-          - m_UnityOpenGLES20: 0
-            m_AndroidSelected: 0
-            m_AndroidMinVersion: 1
-          - m_UnityOpenGLES30: 0
-            m_AndroidSelected: 0
-            m_AndroidMinVersion: 1
-          - m_LightmapEncoding: 2
-          - m_LightmapBaking: 0
-          - m_LightmapGIBaking: 0
-          - m_LightmapCompressTextures: 1
-          - m_LightmapUsesHighBitDepth: 1
-          - m_LightmapUsesHDR: 0
-          - m_LightmapDir: ""
-          - m_LightmapSettings: []
-          - m_ShadowmaskMode: 0
-          - m_ShadowResolution: 1
-          - m_Shadows: 1
-          - m_VRRig:
-            m_Camera: {fileID: 0}
-            m_UsesExternalCamera: 1
-          - m_ColorSpace: 0
-          - m_BuildTarget: 5
-          - m_ShowUnitySplashScreen: 1
-          - m_ShowUnitySplashLogo: 1
-          - m_SplashScreenBackgroundColor: {r: 0.1372549019607552, g: 0.1215686274509804, b: 0.12549019607843135, a: 1}
-          - m_AndroidGraphicsJobs:
-          - m_BuildTarget:
-            m_AndroidGradleBuildSystem: 0
-            m_GraphicsJobs:
-            - m_Enable: 1
-            m_Settings:
-            - m_UnityVersion: 2022.3
-              m_UnityLTSVersion: 2022.3
-              m_TargetPlatform: 26
-              m_TargetPlatformID: 6
-              m_StereoRenderingPath:
-              - m_GenerateMipmap: 0
-                m_EnableRealtimeMipmapGeneration: 0
-                m_EnableStreamingMipmap: 0
-            m_GraphicsJobMode: 0
-            m_GPUInstancing: 0
-            m_GPUComputeInstancing: 0
-            m_MSTreeQuality: 2
-            m_BestTreeQuality: 0
-            m_MSTreeCost: 1
-            m_MSTreeResolution: 2
-            - m_AudioSettings:
-            - m_AudioMixerSize: 1024
-              m_DisableAudio: 0
-              m_SpatializerPlugin:
-              - m_SpatializerCount: 1
-                - m_SpatializerName:
-                  - m_Object:
-                    m_InstanceID: 0
-                    m_ClassID: 0
-                    m_CacheID: 0
-                  m_PrefabInstance: {fileID: 0}
-                  m_PrefabAsset: {fileID: 0}
-                  m_Name: HRTF Spatializer
-                  m_Device: HRTF
-                  m_OutputSampleRate: 44100
-                  m_HRTFVersion: 1
-                  m_HRTFTSize: 128
-                  m_HRTFTSize: 16
-                  m_HRTFTSize: 32
-                  m_HRTFTSize: 64
-                  m_HRTFMinFrameSize: 1
-                  m_HRTFMaxFrameSize: 64
-                  m_HRTFSizeType: PowerOfTwo
-                  m_HRTFPath: 
-                  m_HRTFDatasetSuffix: 
-                  m_HRTFChannelMap: 
-            - m_AudioSpatializer: 0
-          - m_ProgressiveLightmapRuntimeStaticBatching: 1
-          - m_DXRRuntime: 0
-          - m_HoloLensRemotingAvailable: 0
-          - m_WindowsHolographicRemotingEnabled: 0
-          - m_OptimizedFramePacing: 1
-          - m_LegacyClampBlendShapeWeights: 0
-          - m_PlayerSettings: []
-          - m_ActivePlayerSettings: []
-          - m_VROptimized: 0
-          - m_AndroidVR: 1
-          - m_AppleVR: 0
-          - m_GraphicsAPIs:
-          - m_UnityVulkan: 0
-            m_AndroidSelected: 0
-            m_AndroidMinVersion: 1
-          - m_UnityOpenGLES20: 0
-            m_AndroidSelected: 0
-            m_AndroidMinVersion: 1
-          - m_UnityOpenGLES30: 0
-            m_AndroidSelected: 0
-            m_AndroidMinVersion: 1
-          - m_LightmapEncoding: 2
-          - m_LightmapBaking: 0
-          - m_LightmapGIBaking: 0
-          - m_LightmapCompressTextures: 1
-          - m_LightmapUsesHighBitDepth: 1
-          - m_LightmapUsesHDR: 0
-          - m_LightmapDir: ""
-          - m_LightmapSettings: []
-          - m_ShadowmaskMode: 0
-          - m_ShadowResolution: 1
-          - m_Shadows: 1
-          - m_VRRig:
-            m_Camera: {fileID: 0}
-            m_UsesExternalCamera: 1
-          - m_ColorSpace: 0
-          - m_BuildTarget: 13
-          - m_ShowUnitySplashScreen: 1
-          - m_ShowUnitySplashLogo: 1
-          - m_SplashScreenBackgroundColor: {r: 0.1372549019607552, g: 0.1215686274509804, b: 0.12549019607843135, a: 1}
-          EOF
-
-      - name: Build with Unity (Batch Mode)
-        run: |
-          echo "Building Unity project in batch mode..."
-          echo "Unity path: /unity/${{ env.UNITY_VERSION }}"
-          echo "Project path: ${{ github.workspace }}"
-          echo "Build target: ${{ env.BUILD_TARGET }}"
-          echo ""
-          
-          # 检查 Unity 是否存在
-          if [ ! -f "/unity/${{ env.UNITY_VERSION }}/Editor/Unity" ]; then
-            echo "❌ Unity Editor not found"
-            echo "Expected path: /unity/${{ env.UNITY_VERSION }}/Editor/Unity"
-            exit 1
-          fi
-          
-          # 显示 Unity 版本
-          /unity/${{ env.UNITY_VERSION }}/Editor/Unity -version || true
-          
-          # 使用 Unity 命令行编译（无模式）
-          echo "Starting Unity batch mode build..."
-          
-          /unity/${{ env.UNITY_VERSION }}/Editor/Unity \
-            -batchmode \
-            -nographics \
-            -quit \
-            -buildTarget ${{ env.BUILD_TARGET }} \
-            -projectPath ${{ github.workspace }} \
-            -outputBuildPath ${{ github.workspace }}/builds/Android \
-            -logFile ${{ github.workspace }}/build.log \
-            -executeMethod UnityEditor.EditorApplication.Exit || true
-          
-          echo ""
-          echo "Unity build completed!"
-          echo "Build log: ${{ github.workspace }}/build.log"
-
-      - name: Check Build Output
-        run: |
-          echo "Checking build output..."
-          ls -la ${{ github.workspace }}/builds/ || echo "No builds directory found"
-          cat ${{ github.workspace }}/build.log 2>/dev/null || echo "No build log found"
-
-      - name: Find APK
-        run: |
-          echo "Searching for APK files..."
-          find ${{ github.workspace }} -name "*.apk" -type f
-          
-          if [ -z "$(find ${{ github.workspace }} -name '*.apk' -type f)" ]; then
-            echo "❌ No APK file found!"
-            echo "This is expected - Unity cannot be built without a license in GitHub Actions"
-            echo ""
-            echo "## 📋 Why No APK?"
-            echo "Unity requires:"
-            echo "1. A valid license (Personal is free)"
-            echo "2. Graphical environment (even with -nographics)"
-            echo "3. XR plugins (if VR) need full Unity"
-            echo ""
-            echo "GitHub Actions does not provide these requirements."
-          else
-            echo "✅ APK file found!"
-            find ${{ github.workspace }} -name "*.apk" -type f
-          fi
-
-      - name: Upload APK (if exists)
+      - name: Upload APK Artifact
+        if: always()
         uses: actions/upload-artifact@v4
-        if: success()
         with:
           name: VRVideoPlayer-Android-APK
-          path: ${{ github.workspace }}/**/*.apk
+          path: |
+            unity_vr_player/builds/Android/*.apk
+            unity_vr_player/builds/Android/**/*.apk
+          if-no-files-found: warn
 
       - name: Upload Build Log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Unity-Build-Log
-          path: ${{ github.workspace }}/build.log
-
-      - name: Final Summary
-        run: |
-          echo "## 🚀 Build Summary"
-          echo ""
-          echo "✅ Workflow completed"
-          echo "✅ Project structure created"
-          echo "✅ Unity build attempted"
-          echo ""
-          echo "### 📦 APK Status"
-          if [ -z "$(find ${{ github.workspace }} -name '*.apk' -type f)" ]; then
-            echo "❌ No APK generated (expected in GitHub Actions)"
-            echo ""
-            echo "### 💡 How to Build APK"
-            echo "1. Download project to your machine"
-            echo "2. Install Unity 2022.3 LTS (free Personal license)"
-            echo "3. Open project in Unity"
-            echo "4. Switch to Android platform"
-            echo "5. Click Build & Run"
-            echo "6. APK will be generated in builds/Android/"
-          else
-            echo "✅ APK artifact uploaded below!"
-          fi
-          echo ""
-          echo "### 📂 Artifacts"
-          echo "- VRVideoPlayer-Android-APK (APK file if generated)"
-          echo "- Unity-Build-Log (build log)"
+          path: |
+            unity-build.log
+            unity_vr_player/unity-build.log
+            unity_vr_player/Library/PlayerDataCache/**/Editor.log
+          if-no-files-found: warn

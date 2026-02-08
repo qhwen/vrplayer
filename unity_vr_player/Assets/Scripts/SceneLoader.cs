@@ -1,47 +1,58 @@
+﻿using System.Collections;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-/// 主场景管理器
+/// <summary>
+/// 主场景管理器。
+/// </summary>
 public class SceneLoader : MonoBehaviour
 {
     public static SceneLoader Instance { get; private set; }
-    
+
     [Header("场景设置")]
     [SerializeField] private string videoPlayerScene = "VideoPlayerScene";
     [SerializeField] private string settingsScene = "SettingsScene";
-    
-    void Awake()
+
+    private void Awake()
     {
         if (Instance == null)
         {
             Instance = this;
+            DontDestroyOnLoad(gameObject);
+            return;
         }
-        DontDestroyOnLoad(gameObject);
+
+        if (Instance != this)
+        {
+            Destroy(gameObject);
+        }
     }
-    
-    /// 加载视频播放器场景
+
     public void LoadVideoPlayerScene()
     {
         StartCoroutine(LoadSceneAsync(videoPlayerScene));
     }
-    
-    /// 加载设置场景
+
     public void LoadSettingsScene()
     {
         StartCoroutine(LoadSceneAsync(settingsScene));
     }
-    
-    /// 异步加载场景
+
     private IEnumerator LoadSceneAsync(string sceneName)
     {
         AsyncOperation asyncLoad = SceneManager.LoadSceneAsync(sceneName, LoadSceneMode.Single);
-        
+        if (asyncLoad == null)
+        {
+            Debug.LogError("场景加载失败，场景不存在: " + sceneName);
+            yield break;
+        }
+
         while (!asyncLoad.isDone)
         {
-            Debug.Log("加载场景中: " + sceneName + " - " + asyncLoad.progress * 100 + "%");
+            Debug.Log("加载场景中: " + sceneName + " - " + (asyncLoad.progress * 100f).ToString("F1") + "%");
             yield return null;
         }
-        
+
         Debug.Log("场景加载完成: " + sceneName);
     }
 }

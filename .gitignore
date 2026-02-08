@@ -1,0 +1,35 @@
+﻿# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Unity generated folders
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Mm]emoryCaptures/
+UserSettings/
+
+# Addressables generated
+Assets/AddressableAssetsData/*/*.bin*
+
+# Visual Studio / Rider
+*.csproj
+*.sln
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+
+# Unity cache and generated files
+*.apk
+*.aab
+*.unitypackage
+
+# Auto-generated meta backup
+*.orig

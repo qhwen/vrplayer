@@ -374,3 +374,31 @@ MIT License
 *版本：1.0.0*
 *创建日期：2026-02-07*
 *框架：Unity 2022.3 LTS*
+
+## 无本机 Unity 的 APK 打包（CI）
+
+当前仓库已提供 GitHub Actions 构建流程：`.github/workflows/build.yml`。
+
+### 触发方式
+- 推送到 `master` 分支
+- 推送 `v*` 标签
+- 手动触发 `workflow_dispatch`
+
+### 必需 Secrets
+- `UNITY_LICENSE`
+- `UNITY_EMAIL`
+- `UNITY_PASSWORD`
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_PASS`
+- `ANDROID_KEYALIAS_NAME`
+- `ANDROID_KEYALIAS_PASS`
+
+### 构建入口
+- Unity Editor 脚本：`unity_vr_player/Assets/Editor/BuildAndroid.cs`
+- Build Method：`BuildAndroid.PerformBuild`
+
+### 构建产物
+- APK：`unity_vr_player/builds/Android/*.apk`
+- 日志：`unity-build.log`
+
+> 注意：如果未配置 Unity License 或 Android 签名密钥，流水线会失败或无法产出可安装 APK。
