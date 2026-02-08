@@ -59,6 +59,8 @@ Last Updated: 2026-02-08
 
 ## Round Validation (2026-02-08)
 
+- Commits: `b3c02e8`, `ed2e826`, `fa861cd`.
+- CI build: `https://github.com/qhwen/vrplayer/actions/runs/21798355511` (success).
+- Built APK: `downloads/VRVideoPlayer.apk`.
 - Static code checks completed for changed files.
 - Real device validation still required for permission popup behavior on Android 15 OEM variants (especially selected-media vs allow-all choices).
-- CI/APK rebuild status: pending this round commit.
