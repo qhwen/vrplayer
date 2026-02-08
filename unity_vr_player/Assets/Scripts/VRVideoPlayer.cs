@@ -1,4 +1,5 @@
 using System.Collections;
+using System.IO;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -15,6 +16,7 @@ public class VRVideoPlayer : MonoBehaviour
     [SerializeField] private bool enableHeadTracking = true;
     [SerializeField] private float rotationSensitivity = 0.5f;
     [SerializeField, Range(0.01f, 1f)] private float smoothingFactor = 0.1f;
+    [SerializeField, Range(5f, 60f)] private float prepareTimeoutSeconds = 20f;
 
     [Header("Input Settings")]
     [SerializeField] private bool enablePointerDrag = true;
@@ -27,6 +29,10 @@ public class VRVideoPlayer : MonoBehaviour
     private bool isPlaying;
     private bool isInitialized;
     private bool hasVideoSource;
+    private bool isPreparing;
+    private float prepareStartTime;
+
+    private string lastErrorMessage = string.Empty;
 
     private float currentYaw;
     private float currentPitch;
@@ -57,7 +63,7 @@ public class VRVideoPlayer : MonoBehaviour
 
         if (!string.IsNullOrWhiteSpace(defaultVideoPath))
         {
-            videoPlayer.url = defaultVideoPath;
+            videoPlayer.url = NormalizeVideoPath(defaultVideoPath);
             hasVideoSource = true;
         }
 
@@ -104,7 +110,7 @@ public class VRVideoPlayer : MonoBehaviour
     {
         if (!string.IsNullOrWhiteSpace(defaultVideoPath))
         {
-            videoPlayer.Prepare();
+            PlayVideo(defaultVideoPath);
         }
     }
 
@@ -125,6 +131,7 @@ public class VRVideoPlayer : MonoBehaviour
             SmoothHeadTracking();
         }
 
+        CheckPrepareTimeout();
         ApplyVRRotation();
         UpdateUI();
     }
@@ -141,14 +148,15 @@ public class VRVideoPlayer : MonoBehaviour
             videoPlayer.Stop();
         }
 
-        string finalPath = path.Trim();
-        if (finalPath.StartsWith("file://") && !finalPath.StartsWith("file:///"))
-        {
-            finalPath = "file:///" + finalPath.Substring("file://".Length).TrimStart('/');
-        }
+        string finalPath = NormalizeVideoPath(path);
 
         hasVideoSource = true;
+        isPlaying = false;
         isInitialized = false;
+        isPreparing = true;
+        lastErrorMessage = string.Empty;
+        prepareStartTime = Time.unscaledTime;
+
         videoPlayer.url = finalPath;
         videoPlayer.Prepare();
 
@@ -175,8 +183,11 @@ public class VRVideoPlayer : MonoBehaviour
 
         if (!isInitialized)
         {
-            if (hasVideoSource && !string.IsNullOrWhiteSpace(videoPlayer.url))
+            if (hasVideoSource && !string.IsNullOrWhiteSpace(videoPlayer.url) && !isPreparing)
             {
+                isPreparing = true;
+                lastErrorMessage = string.Empty;
+                prepareStartTime = Time.unscaledTime;
                 videoPlayer.Prepare();
             }
 
@@ -197,6 +208,7 @@ public class VRVideoPlayer : MonoBehaviour
         videoPlayer.Stop();
         isPlaying = false;
         isInitialized = false;
+        isPreparing = false;
     }
 
     public void SetVolume(float volume)
@@ -223,6 +235,64 @@ public class VRVideoPlayer : MonoBehaviour
     {
         targetYaw = yaw;
         targetPitch = Mathf.Clamp(pitch, -90f, 90f);
+    }
+
+    private string NormalizeVideoPath(string rawPath)
+    {
+        string path = rawPath.Trim();
+
+        if (path.StartsWith("http://", System.StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("https://", System.StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("file://", System.StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("content://", System.StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("jar:file://", System.StringComparison.OrdinalIgnoreCase))
+        {
+            return path;
+        }
+
+        string normalized = path.Replace("\\", "/");
+
+        if (normalized.StartsWith("/"))
+        {
+            return "file://" + normalized;
+        }
+
+        if (Path.IsPathRooted(path))
+        {
+            if (normalized.Length > 1 && normalized[1] == ':')
+            {
+                normalized = "/" + normalized;
+            }
+
+            return "file://" + normalized;
+        }
+
+        return path;
+    }
+
+    private void CheckPrepareTimeout()
+    {
+        if (!isPreparing || isInitialized)
+        {
+            return;
+        }
+
+        if (Time.unscaledTime - prepareStartTime < prepareTimeoutSeconds)
+        {
+            return;
+        }
+
+        isPreparing = false;
+        isInitialized = false;
+        isPlaying = false;
+        lastErrorMessage = "Video loading timeout";
+
+        if (videoPlayer != null)
+        {
+            videoPlayer.Stop();
+        }
+
+        Debug.LogError("Video prepare timeout: " + (videoPlayer != null ? videoPlayer.url : "<null>"));
     }
 
     private void HandlePointerDrag()
@@ -332,18 +402,6 @@ public class VRVideoPlayer : MonoBehaviour
         targetPitch = Mathf.Clamp(targetPitch - deltaY * rotationSensitivity, -90f, 90f);
     }
 
-    public void OnTap()
-    {
-        if (isPlaying)
-        {
-            PauseVideo();
-        }
-        else
-        {
-            ResumeVideo();
-        }
-    }
-
     private void CreateDefaultSkySphere()
     {
         skySphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
@@ -355,13 +413,18 @@ public class VRVideoPlayer : MonoBehaviour
         GameObject canvasObject = new GameObject("UICanvas");
         uiCanvas = canvasObject.AddComponent<Canvas>();
         uiCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        canvasObject.AddComponent<CanvasScaler>();
+
+        CanvasScaler scaler = canvasObject.AddComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920f, 1080f);
+        scaler.matchWidthOrHeight = 0.6f;
+
         canvasObject.AddComponent<GraphicRaycaster>();
 
         Font font = Resources.GetBuiltinResource<Font>("Arial.ttf");
 
-        playbackStatusText = CreateText("StatusText", "Waiting for video selection", new Vector2(0f, 300f), 24, font);
-        timeText = CreateText("TimeText", "00:00 / 00:00", new Vector2(0f, 250f), 18, font);
+        playbackStatusText = CreateText("StatusText", "Select a local video to start", new Vector2(0f, 476f), 34, font);
+        timeText = CreateText("TimeText", "00:00 / 00:00", new Vector2(0f, 430f), 28, font);
     }
 
     private Text CreateText(string name, string content, Vector2 anchoredPosition, int fontSize, Font font)
@@ -377,7 +440,10 @@ public class VRVideoPlayer : MonoBehaviour
         text.text = content;
 
         RectTransform rect = text.GetComponent<RectTransform>();
-        rect.sizeDelta = new Vector2(600f, 40f);
+        rect.anchorMin = new Vector2(0.5f, 1f);
+        rect.anchorMax = new Vector2(0.5f, 1f);
+        rect.pivot = new Vector2(0.5f, 1f);
+        rect.sizeDelta = new Vector2(1500f, 44f);
         rect.anchoredPosition = anchoredPosition;
 
         return text;
@@ -392,14 +458,22 @@ public class VRVideoPlayer : MonoBehaviour
 
         if (!hasVideoSource)
         {
-            playbackStatusText.text = "Choose a video from the right panel";
+            playbackStatusText.text = "Select a local video from the list";
             playbackStatusText.color = Color.white;
+            timeText.text = "00:00 / 00:00";
             return;
         }
 
-        if (!isInitialized)
+        if (!string.IsNullOrWhiteSpace(lastErrorMessage))
         {
-            playbackStatusText.text = "Loading...";
+            playbackStatusText.text = "Cannot play this file: " + lastErrorMessage;
+            playbackStatusText.color = new Color(1f, 0.4f, 0.4f, 1f);
+            return;
+        }
+
+        if (isPreparing)
+        {
+            playbackStatusText.text = "Loading video...";
             playbackStatusText.color = Color.cyan;
             return;
         }
@@ -441,18 +515,23 @@ public class VRVideoPlayer : MonoBehaviour
             return;
         }
 
-        source.Play();
+        isPreparing = false;
         isPlaying = true;
         isInitialized = true;
+        lastErrorMessage = string.Empty;
 
+        source.Play();
         Debug.Log("Video started: " + source.url);
     }
 
     private void OnVideoError(VideoPlayer source, string message)
     {
+        isPreparing = false;
         isPlaying = false;
         isInitialized = false;
-        Debug.LogError("Video playback error: " + message);
+        lastErrorMessage = string.IsNullOrWhiteSpace(message) ? "Unknown error" : message;
+
+        Debug.LogError("Video playback error: " + lastErrorMessage);
     }
 
     private void OnDestroy()
@@ -499,5 +578,29 @@ public class VRVideoPlayer : MonoBehaviour
     {
         return isInitialized;
     }
-}
 
+    public bool GetIsPreparing()
+    {
+        return isPreparing;
+    }
+
+    public bool GetHasVideoSource()
+    {
+        return hasVideoSource;
+    }
+
+    public string GetLastErrorMessage()
+    {
+        return lastErrorMessage;
+    }
+
+    public string GetCurrentVideoUrl()
+    {
+        if (videoPlayer == null)
+        {
+            return string.Empty;
+        }
+
+        return videoPlayer.url;
+    }
+}

@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using UnityEngine.EventSystems;
 
@@ -12,7 +13,7 @@ public static class AppRuntimeBootstrap
         EnsureEventSystem();
         EnsureMainCamera();
 
-        if (Object.FindObjectOfType<VRVideoPlayer>() != null)
+        if (UnityEngine.Object.FindObjectOfType<VRVideoPlayer>() != null)
         {
             return;
         }
@@ -21,25 +22,34 @@ public static class AppRuntimeBootstrap
         root.AddComponent<LocalFileManager>();
         root.AddComponent<WebDAVManager>();
         root.AddComponent<VRVideoPlayer>();
-        root.AddComponent<VRUIManager>();
         root.AddComponent<VideoBrowserUI>();
     }
 
     private static void EnsureEventSystem()
     {
-        if (Object.FindObjectOfType<EventSystem>() != null)
+        if (UnityEngine.Object.FindObjectOfType<EventSystem>() != null)
         {
             return;
         }
 
-        GameObject eventSystem = new GameObject("EventSystem");
-        eventSystem.AddComponent<EventSystem>();
-        eventSystem.AddComponent<StandaloneInputModule>();
+        GameObject eventSystemObject = new GameObject("EventSystem");
+        eventSystemObject.AddComponent<EventSystem>();
+
+        Type newInputModuleType = Type.GetType("UnityEngine.InputSystem.UI.InputSystemUIInputModule, Unity.InputSystem");
+        if (newInputModuleType != null)
+        {
+            eventSystemObject.AddComponent(newInputModuleType);
+        }
+
+        if (eventSystemObject.GetComponent<BaseInputModule>() == null)
+        {
+            eventSystemObject.AddComponent<StandaloneInputModule>();
+        }
     }
 
     private static void EnsureMainCamera()
     {
-        if (Object.FindObjectOfType<Camera>() != null)
+        if (UnityEngine.Object.FindObjectOfType<Camera>() != null)
         {
             return;
         }

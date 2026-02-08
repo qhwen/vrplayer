@@ -19,7 +19,8 @@ public class LocalFileManager : MonoBehaviour
 
     [Header("Scan Settings")]
     [SerializeField] private bool includeCommonMediaFolders = true;
-    [SerializeField, Range(1, 6)] private int scanDepth = 3;
+    [SerializeField, Range(1, 5)] private int scanDepth = 2;
+    [SerializeField, Range(20, 500)] private int maxCollectedVideos = 150;
 
     private readonly List<VideoFile> localVideos = new List<VideoFile>();
     private readonly string[] supportedExtensions = { ".mp4", ".mkv", ".mov" };
@@ -97,11 +98,11 @@ public class LocalFileManager : MonoBehaviour
         }
 
         HashSet<string> deduplicate = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (VideoFile video in localVideos)
+        for (int i = 0; i < localVideos.Count; i++)
         {
-            if (!string.IsNullOrWhiteSpace(video.localPath))
+            if (!string.IsNullOrWhiteSpace(localVideos[i].localPath))
             {
-                deduplicate.Add(video.localPath);
+                deduplicate.Add(localVideos[i].localPath);
             }
         }
 
@@ -123,6 +124,11 @@ public class LocalFileManager : MonoBehaviour
 
         for (int i = 0; i < roots.Count; i++)
         {
+            if (deduplicate.Count >= maxCollectedVideos)
+            {
+                break;
+            }
+
             ScanDirectoryRecursive(roots[i], deduplicate, 0);
         }
 
@@ -146,13 +152,9 @@ public class LocalFileManager : MonoBehaviour
         AddSearchRoot(roots, "/storage/emulated/0/Movies");
         AddSearchRoot(roots, "/storage/emulated/0/DCIM");
         AddSearchRoot(roots, "/storage/emulated/0/Download");
-        AddSearchRoot(roots, "/sdcard/Movies");
-        AddSearchRoot(roots, "/sdcard/DCIM");
-        AddSearchRoot(roots, "/sdcard/Download");
 #else
         AddSearchRoot(roots, Environment.GetFolderPath(Environment.SpecialFolder.MyVideos));
         AddSearchRoot(roots, Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
-        AddSearchRoot(roots, Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory));
 #endif
 
         return roots;
@@ -184,6 +186,11 @@ public class LocalFileManager : MonoBehaviour
             return;
         }
 
+        if (deduplicate.Count >= maxCollectedVideos)
+        {
+            return;
+        }
+
         if (!Directory.Exists(directory))
         {
             return;
@@ -194,12 +201,17 @@ public class LocalFileManager : MonoBehaviour
             string[] files = Directory.GetFiles(directory, "*.*", SearchOption.TopDirectoryOnly);
             for (int i = 0; i < files.Length; i++)
             {
+                if (deduplicate.Count >= maxCollectedVideos)
+                {
+                    return;
+                }
+
                 TryAddVideo(files[i], deduplicate);
             }
         }
-        catch (Exception e)
+        catch
         {
-            Debug.LogWarning("Cannot read files from directory: " + directory + " | " + e.Message);
+            // Ignore permission denied folders.
         }
 
         if (depth >= scanDepth)
@@ -212,12 +224,17 @@ public class LocalFileManager : MonoBehaviour
             string[] subDirectories = Directory.GetDirectories(directory, "*", SearchOption.TopDirectoryOnly);
             for (int i = 0; i < subDirectories.Length; i++)
             {
+                if (deduplicate.Count >= maxCollectedVideos)
+                {
+                    return;
+                }
+
                 ScanDirectoryRecursive(subDirectories[i], deduplicate, depth + 1);
             }
         }
-        catch (Exception e)
+        catch
         {
-            Debug.LogWarning("Cannot enumerate sub directories: " + directory + " | " + e.Message);
+            // Ignore permission denied folders.
         }
     }
 
