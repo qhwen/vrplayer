@@ -30,6 +30,8 @@ public class LocalFileManager : MonoBehaviour
     private ICacheService cacheService;
 
     private bool permissionRequestInFlight;
+    private bool lastPermissionRequestDenied;
+    private bool lastPermissionRequestDontAskAgain;
 
     private void Awake()
     {
@@ -65,6 +67,16 @@ public class LocalFileManager : MonoBehaviour
         return permissionRequestInFlight;
     }
 
+    public bool WasLastPermissionRequestDenied()
+    {
+        return lastPermissionRequestDenied;
+    }
+
+    public bool WasLastPermissionRequestDeniedAndDontAskAgain()
+    {
+        return lastPermissionRequestDontAskAgain;
+    }
+
     public bool HasReadableMediaPermission()
     {
 #if UNITY_ANDROID && !UNITY_EDITOR
@@ -90,6 +102,11 @@ public class LocalFileManager : MonoBehaviour
     private IEnumerator RequestReadableMediaPermissionRoutine()
     {
         permissionRequestInFlight = true;
+        lastPermissionRequestDenied = false;
+        lastPermissionRequestDontAskAgain = false;
+
+        // Delay one frame to avoid requesting too early during startup.
+        yield return null;
 
         int sdkInt = GetAndroidSdkInt();
 
@@ -110,13 +127,24 @@ public class LocalFileManager : MonoBehaviour
         permissionRequestInFlight = false;
     }
 
-    private static bool HasAnyReadableMediaPermission()
+    private bool HasAnyReadableMediaPermission()
     {
-        bool hasLegacy = Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead);
+        int sdkInt = GetAndroidSdkInt();
+
         bool hasMediaVideo = Permission.HasUserAuthorizedPermission("android.permission.READ_MEDIA_VIDEO");
         bool hasSelectedVisualMedia = Permission.HasUserAuthorizedPermission("android.permission.READ_MEDIA_VISUAL_USER_SELECTED");
 
-        return hasLegacy || hasMediaVideo || hasSelectedVisualMedia;
+        if (sdkInt >= 34)
+        {
+            return hasMediaVideo || hasSelectedVisualMedia;
+        }
+
+        if (sdkInt >= 33)
+        {
+            return hasMediaVideo;
+        }
+
+        return Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead);
     }
 
     private static int GetAndroidSdkInt()
@@ -132,7 +160,7 @@ public class LocalFileManager : MonoBehaviour
         }
     }
 
-    private static IEnumerator RequestSinglePermission(string permission)
+    private IEnumerator RequestSinglePermission(string permission)
     {
         if (string.IsNullOrWhiteSpace(permission) || Permission.HasUserAuthorizedPermission(permission))
         {
@@ -140,19 +168,45 @@ public class LocalFileManager : MonoBehaviour
         }
 
         bool completed = false;
+        bool denied = false;
+        bool deniedDontAskAgain = false;
 
         PermissionCallbacks callbacks = new PermissionCallbacks();
         callbacks.PermissionGranted += _ => { completed = true; };
-        callbacks.PermissionDenied += _ => { completed = true; };
-        callbacks.PermissionDeniedAndDontAskAgain += _ => { completed = true; };
+        callbacks.PermissionDenied += _ =>
+        {
+            completed = true;
+            denied = true;
+        };
+        callbacks.PermissionDeniedAndDontAskAgain += _ =>
+        {
+            completed = true;
+            denied = true;
+            deniedDontAskAgain = true;
+        };
 
         Permission.RequestUserPermission(permission, callbacks);
 
-        float timeout = 8f;
+        float timeout = 10f;
         while (!completed && timeout > 0f)
         {
             timeout -= Time.unscaledDeltaTime;
             yield return null;
+        }
+
+        if (!completed)
+        {
+            denied = true;
+        }
+
+        if (denied)
+        {
+            lastPermissionRequestDenied = true;
+        }
+
+        if (deniedDontAskAgain)
+        {
+            lastPermissionRequestDontAskAgain = true;
         }
     }
 

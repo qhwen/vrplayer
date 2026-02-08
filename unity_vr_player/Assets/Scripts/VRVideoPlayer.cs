@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.Video;
@@ -35,6 +36,8 @@ public class VRVideoPlayer : MonoBehaviour
 
     private Vector2 lastPointerPosition;
     private bool isPointerDragging;
+
+    private static readonly List<RaycastResult> UIRaycastResults = new List<RaycastResult>(8);
 
     private void Awake()
     {
@@ -266,7 +269,7 @@ public class VRVideoPlayer : MonoBehaviour
                 return;
             }
 
-            if (IsPointerOverUI(touch.fingerId))
+            if (IsPointerOverUI(touch.fingerId, touch.position))
             {
                 lastPointerPosition = touch.position;
                 return;
@@ -293,32 +296,45 @@ public class VRVideoPlayer : MonoBehaviour
 
         if (isPointerDragging && Input.GetMouseButton(0))
         {
-            if (IsPointerOverUI(-1))
+            Vector2 mousePosition = Input.mousePosition;
+
+            if (IsPointerOverUI(-1, mousePosition))
             {
-                lastPointerPosition = Input.mousePosition;
+                lastPointerPosition = mousePosition;
                 return;
             }
 
-            Vector2 mousePosition = Input.mousePosition;
             Vector2 delta = mousePosition - lastPointerPosition;
             lastPointerPosition = mousePosition;
             OnDrag(delta.x * pointerDeltaScale, delta.y * pointerDeltaScale);
         }
     }
 
-    private static bool IsPointerOverUI(int pointerId)
+    private static bool IsPointerOverUI(int pointerId, Vector2 screenPosition)
     {
         if (EventSystem.current == null)
         {
             return false;
         }
 
-        if (pointerId >= 0)
+        if (pointerId >= 0 && EventSystem.current.IsPointerOverGameObject(pointerId))
         {
-            return EventSystem.current.IsPointerOverGameObject(pointerId);
+            return true;
         }
 
-        return EventSystem.current.IsPointerOverGameObject();
+        if (pointerId < 0 && EventSystem.current.IsPointerOverGameObject())
+        {
+            return true;
+        }
+
+        PointerEventData pointerData = new PointerEventData(EventSystem.current)
+        {
+            position = screenPosition
+        };
+
+        UIRaycastResults.Clear();
+        EventSystem.current.RaycastAll(pointerData, UIRaycastResults);
+        return UIRaycastResults.Count > 0;
     }
 
     private void SmoothHeadTracking()

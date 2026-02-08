@@ -1,4 +1,3 @@
-using System;
 using UnityEngine;
 using UnityEngine.EventSystems;
 
@@ -34,17 +33,7 @@ public static class AppRuntimeBootstrap
 
         GameObject eventSystemObject = new GameObject("EventSystem");
         eventSystemObject.AddComponent<EventSystem>();
-
-        Type newInputModuleType = Type.GetType("UnityEngine.InputSystem.UI.InputSystemUIInputModule, Unity.InputSystem");
-        if (newInputModuleType != null)
-        {
-            eventSystemObject.AddComponent(newInputModuleType);
-        }
-
-        if (eventSystemObject.GetComponent<BaseInputModule>() == null)
-        {
-            eventSystemObject.AddComponent<StandaloneInputModule>();
-        }
+        eventSystemObject.AddComponent<StandaloneInputModule>();
     }
 
     private static void EnsureMainCamera()

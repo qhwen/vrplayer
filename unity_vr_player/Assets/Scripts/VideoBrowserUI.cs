@@ -9,6 +9,9 @@ using UnityEngine.UI;
 public class VideoBrowserUI : MonoBehaviour
 {
     private const int MaxVisibleItems = 60;
+    private const float ListItemHeight = 80f;
+    private const float ListItemSpacing = 8f;
+    private const float ListPadding = 10f;
 
     private VRVideoPlayer vrVideoPlayer;
     private LocalFileManager localFileManager;
@@ -16,6 +19,7 @@ public class VideoBrowserUI : MonoBehaviour
 
     private Canvas canvas;
     private RectTransform listContent;
+    private ScrollRect listScrollRect;
 
     private Text statusText;
     private Text currentVideoText;
@@ -110,7 +114,7 @@ public class VideoBrowserUI : MonoBehaviour
         if (!localFileManager.HasReadableMediaPermission())
         {
             localFileManager.RequestReadableMediaPermission();
-            yield return WaitForPermissionRequest(4f);
+            yield return WaitForPermissionRequest(8f);
         }
 
         RefreshVideoList();
@@ -196,8 +200,10 @@ public class VideoBrowserUI : MonoBehaviour
         Image scrollBackground = scrollObject.AddComponent<Image>();
         scrollBackground.color = new Color(0.08f, 0.08f, 0.08f, 0.96f);
 
-        ScrollRect scroll = scrollObject.AddComponent<ScrollRect>();
-        scroll.horizontal = false;
+        listScrollRect = scrollObject.AddComponent<ScrollRect>();
+        listScrollRect.horizontal = false;
+        listScrollRect.movementType = ScrollRect.MovementType.Clamped;
+        listScrollRect.scrollSensitivity = 40f;
 
         GameObject viewportObject = new GameObject("Viewport");
         viewportObject.transform.SetParent(scrollObject.transform, false);
@@ -224,18 +230,8 @@ public class VideoBrowserUI : MonoBehaviour
         listContent.anchoredPosition = Vector2.zero;
         listContent.sizeDelta = new Vector2(0f, 0f);
 
-        VerticalLayoutGroup listLayout = contentObject.AddComponent<VerticalLayoutGroup>();
-        listLayout.spacing = 10f;
-        listLayout.padding = new RectOffset(10, 10, 10, 10);
-        listLayout.childAlignment = TextAnchor.UpperCenter;
-        listLayout.childControlHeight = true;
-        listLayout.childControlWidth = true;
-
-        ContentSizeFitter fitter = contentObject.AddComponent<ContentSizeFitter>();
-        fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
-        scroll.viewport = viewportRect;
-        scroll.content = listContent;
+        listScrollRect.viewport = viewportRect;
+        listScrollRect.content = listContent;
     }
 
     private void RefreshVideoList()
@@ -246,25 +242,34 @@ public class VideoBrowserUI : MonoBehaviour
         }
 
         idleStatusMessage = "Scanning local storage...";
-        List<VideoFile> videos = localFileManager.GetLocalVideos();
-        RebuildVideoList(videos);
 
         bool hasPermission = localFileManager.HasReadableMediaPermission();
-        SetPermissionButtonsVisible(!hasPermission);
-
-        if (videos.Count == 0)
+        if (!hasPermission)
         {
-            if (!hasPermission)
+            SetPermissionButtonsVisible(true);
+            RebuildVideoList(new List<VideoFile>());
+
+            idleStatusMessage = "Storage permission required";
+            if (localFileManager.WasLastPermissionRequestDeniedAndDontAskAgain())
             {
-                idleStatusMessage = "Storage permission required";
-                hintText.text = "Tap Grant Permission. If no popup appears, tap Open Settings and allow Photos and videos.";
+                hintText.text = "Permission was denied with Don't ask again. Tap Open Settings and allow Photos and videos.";
             }
             else
             {
-                idleStatusMessage = "No playable video found";
-                hintText.text = "Put MP4 files in /storage/emulated/0/Movies or /storage/emulated/0/Download, then tap Refresh.";
+                hintText.text = "Tap Grant Permission to allow Photos and videos.";
             }
 
+            return;
+        }
+
+        List<VideoFile> videos = localFileManager.GetLocalVideos();
+        RebuildVideoList(videos);
+        SetPermissionButtonsVisible(false);
+
+        if (videos.Count == 0)
+        {
+            idleStatusMessage = "No playable video found";
+            hintText.text = "Put MP4 files in /storage/emulated/0/Movies or /storage/emulated/0/Download, then tap Refresh.";
             return;
         }
 
@@ -304,8 +309,30 @@ public class VideoBrowserUI : MonoBehaviour
         {
             VideoFile selectedFile = videos[i];
             Button itemButton = CreateListItemButton(listContent, "Video_" + i, BuildButtonText(selectedFile), font);
+
+            RectTransform itemRect = itemButton.GetComponent<RectTransform>();
+            itemRect.anchorMin = new Vector2(0f, 1f);
+            itemRect.anchorMax = new Vector2(1f, 1f);
+            itemRect.pivot = new Vector2(0.5f, 1f);
+            itemRect.anchoredPosition = new Vector2(0f, -ListPadding - i * (ListItemHeight + ListItemSpacing));
+            itemRect.sizeDelta = new Vector2(-ListPadding * 2f, ListItemHeight);
+
             itemButton.onClick.AddListener(() => PlayVideo(selectedFile));
             generatedButtons.Add(itemButton);
+        }
+
+        float contentHeight = ListPadding * 2f;
+        if (count > 0)
+        {
+            contentHeight += count * ListItemHeight + Mathf.Max(0, count - 1) * ListItemSpacing;
+        }
+
+        listContent.sizeDelta = new Vector2(0f, contentHeight);
+
+        if (listScrollRect != null)
+        {
+            listScrollRect.StopMovement();
+            listScrollRect.verticalNormalizedPosition = 1f;
         }
     }
 
@@ -354,7 +381,7 @@ public class VideoBrowserUI : MonoBehaviour
         }
 
         localFileManager.RequestReadableMediaPermission();
-        yield return WaitForPermissionRequest(6f);
+        yield return WaitForPermissionRequest(10f);
         RefreshVideoList();
     }
 
@@ -635,6 +662,7 @@ public class VideoBrowserUI : MonoBehaviour
 
         Image image = buttonObject.AddComponent<Image>();
         image.color = new Color(0.2f, 0.24f, 0.28f, 0.98f);
+        image.raycastTarget = true;
 
         Button button = buttonObject.AddComponent<Button>();
         button.targetGraphic = image;
@@ -752,13 +780,10 @@ public class VideoBrowserUI : MonoBehaviour
 
         Image image = buttonObject.AddComponent<Image>();
         image.color = new Color(0.14f, 0.14f, 0.14f, 0.96f);
+        image.raycastTarget = true;
 
         Button button = buttonObject.AddComponent<Button>();
         button.targetGraphic = image;
-
-        LayoutElement layoutElement = buttonObject.AddComponent<LayoutElement>();
-        layoutElement.minHeight = 74f;
-        layoutElement.preferredHeight = 74f;
 
         GameObject textObject = new GameObject("Label");
         textObject.transform.SetParent(buttonObject.transform, false);
