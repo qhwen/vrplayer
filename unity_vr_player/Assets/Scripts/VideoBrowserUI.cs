@@ -188,8 +188,17 @@ public class VideoBrowserUI : MonoBehaviour
 
         if (videos.Count == 0)
         {
-            idleStatusMessage = "No playable video found";
-            hintText.text = "Put MP4 files in /storage/emulated/0/Movies or /storage/emulated/0/Download, then tap Refresh.";
+            if (!localFileManager.HasReadableMediaPermission())
+            {
+                idleStatusMessage = "Storage permission required";
+                hintText.text = "Allow media read permission, then tap Refresh again.";
+            }
+            else
+            {
+                idleStatusMessage = "No playable video found";
+                hintText.text = "Put MP4 files in /storage/emulated/0/Movies or /storage/emulated/0/Download, then tap Refresh.";
+            }
+
             return;
         }
 
@@ -482,3 +491,4 @@ public class VideoBrowserUI : MonoBehaviour
         return button;
     }
 }
+

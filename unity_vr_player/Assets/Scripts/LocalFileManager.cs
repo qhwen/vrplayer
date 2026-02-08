@@ -19,8 +19,8 @@ public class LocalFileManager : MonoBehaviour
 
     [Header("Scan Settings")]
     [SerializeField] private bool includeCommonMediaFolders = true;
-    [SerializeField, Range(1, 5)] private int scanDepth = 2;
-    [SerializeField, Range(20, 500)] private int maxCollectedVideos = 150;
+    [SerializeField, Range(1, 5)] private int scanDepth = 3;
+    [SerializeField, Range(20, 500)] private int maxCollectedVideos = 200;
 
     private readonly List<VideoFile> localVideos = new List<VideoFile>();
     private readonly string[] supportedExtensions = { ".mp4", ".mkv", ".mov" };
@@ -34,7 +34,7 @@ public class LocalFileManager : MonoBehaviour
             instance = this;
             DontDestroyOnLoad(gameObject);
             InitializeCacheDirectory();
-            RequestRuntimePermissions();
+            EnsureAndroidReadPermission();
             return;
         }
 
@@ -56,20 +56,36 @@ public class LocalFileManager : MonoBehaviour
         Debug.Log("Cache directory: " + cacheDirectory);
     }
 
-    private static void RequestRuntimePermissions()
+    private bool EnsureAndroidReadPermission()
     {
 #if UNITY_ANDROID && !UNITY_EDITOR
-        if (!Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead))
+        const string readMediaVideo = "android.permission.READ_MEDIA_VIDEO";
+
+        bool hasLegacy = Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead);
+        bool hasMediaVideo = Permission.HasUserAuthorizedPermission(readMediaVideo);
+
+        if (!hasLegacy)
         {
             Permission.RequestUserPermission(Permission.ExternalStorageRead);
         }
 
-        const string readMediaVideo = "android.permission.READ_MEDIA_VIDEO";
-        if (!Permission.HasUserAuthorizedPermission(readMediaVideo))
+        if (!hasMediaVideo)
         {
             Permission.RequestUserPermission(readMediaVideo);
         }
+
+        hasLegacy = Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead);
+        hasMediaVideo = Permission.HasUserAuthorizedPermission(readMediaVideo);
+
+        return hasLegacy || hasMediaVideo;
+#else
+        return true;
 #endif
+    }
+
+    public bool HasReadableMediaPermission()
+    {
+        return EnsureAndroidReadPermission();
     }
 
     public void OpenFilePicker()
@@ -81,7 +97,7 @@ public class LocalFileManager : MonoBehaviour
             AddLocalVideo(path);
         }
 #elif UNITY_ANDROID
-        Debug.LogWarning("Android file picker plugin is not integrated yet. Put video files into Movies or app cache folder.");
+        Debug.LogWarning("Android file picker plugin is not integrated yet. Put video files into Movies or Download folder.");
 #elif UNITY_IOS
         Debug.LogWarning("iOS file picker plugin is not integrated yet.");
 #else
@@ -132,6 +148,13 @@ public class LocalFileManager : MonoBehaviour
             ScanDirectoryRecursive(roots[i], deduplicate, 0);
         }
 
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (localVideos.Count == 0)
+        {
+            AddVideosFromAndroidMediaStore(deduplicate);
+        }
+#endif
+
         localVideos.Sort((a, b) => string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase));
         Debug.Log("Refreshed local videos: " + localVideos.Count);
     }
@@ -150,8 +173,12 @@ public class LocalFileManager : MonoBehaviour
 
 #if UNITY_ANDROID
         AddSearchRoot(roots, "/storage/emulated/0/Movies");
-        AddSearchRoot(roots, "/storage/emulated/0/DCIM");
         AddSearchRoot(roots, "/storage/emulated/0/Download");
+        AddSearchRoot(roots, "/storage/emulated/0/DCIM/Camera");
+        AddSearchRoot(roots, "/storage/self/primary/Movies");
+        AddSearchRoot(roots, "/storage/self/primary/Download");
+        AddSearchRoot(roots, "/sdcard/Movies");
+        AddSearchRoot(roots, "/sdcard/Download");
 #else
         AddSearchRoot(roots, Environment.GetFolderPath(Environment.SpecialFolder.MyVideos));
         AddSearchRoot(roots, Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
@@ -278,6 +305,123 @@ public class LocalFileManager : MonoBehaviour
 
         deduplicate.Add(filePath);
     }
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+    private void AddVideosFromAndroidMediaStore(HashSet<string> deduplicate)
+    {
+        if (!EnsureAndroidReadPermission())
+        {
+            return;
+        }
+
+        AndroidJavaObject cursor = null;
+
+        try
+        {
+            AndroidJavaClass unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
+            AndroidJavaObject activity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity");
+            AndroidJavaObject resolver = activity.Call<AndroidJavaObject>("getContentResolver");
+
+            AndroidJavaClass mediaClass = new AndroidJavaClass("android.provider.MediaStore$Video$Media");
+            AndroidJavaObject externalContentUri = mediaClass.GetStatic<AndroidJavaObject>("EXTERNAL_CONTENT_URI");
+
+            string[] projection =
+            {
+                "_id",
+                "_data",
+                "display_name",
+                "_size",
+                "relative_path"
+            };
+
+            cursor = resolver.Call<AndroidJavaObject>(
+                "query",
+                externalContentUri,
+                projection,
+                null,
+                null,
+                "date_added DESC");
+
+            if (cursor == null)
+            {
+                return;
+            }
+
+            int idIndex = cursor.Call<int>("getColumnIndex", "_id");
+            int dataIndex = cursor.Call<int>("getColumnIndex", "_data");
+            int nameIndex = cursor.Call<int>("getColumnIndex", "display_name");
+            int sizeIndex = cursor.Call<int>("getColumnIndex", "_size");
+            int relativePathIndex = cursor.Call<int>("getColumnIndex", "relative_path");
+
+            while (cursor.Call<bool>("moveToNext"))
+            {
+                if (localVideos.Count >= maxCollectedVideos)
+                {
+                    break;
+                }
+
+                string displayName = nameIndex >= 0 ? cursor.Call<string>("getString", nameIndex) : string.Empty;
+                if (string.IsNullOrWhiteSpace(displayName))
+                {
+                    continue;
+                }
+
+                if (!IsSupportedVideoExtension(Path.GetExtension(displayName)))
+                {
+                    continue;
+                }
+
+                string filePath = dataIndex >= 0 ? cursor.Call<string>("getString", dataIndex) : string.Empty;
+                string relativePath = relativePathIndex >= 0 ? cursor.Call<string>("getString", relativePathIndex) : string.Empty;
+                long size = sizeIndex >= 0 ? cursor.Call<long>("getLong", sizeIndex) : 0;
+                long mediaId = idIndex >= 0 ? cursor.Call<long>("getLong", idIndex) : -1;
+
+                string contentUri = mediaId >= 0 ? "content://media/external/video/media/" + mediaId : string.Empty;
+
+                if (string.IsNullOrWhiteSpace(filePath) && !string.IsNullOrWhiteSpace(relativePath))
+                {
+                    string rel = relativePath.Replace("\\", "/").TrimStart('/');
+                    if (!rel.EndsWith("/"))
+                    {
+                        rel += "/";
+                    }
+
+                    filePath = "/storage/emulated/0/" + rel + displayName;
+                }
+
+                string dedupKey = !string.IsNullOrWhiteSpace(filePath) ? filePath : contentUri;
+                if (string.IsNullOrWhiteSpace(dedupKey) || deduplicate.Contains(dedupKey))
+                {
+                    continue;
+                }
+
+                localVideos.Add(new VideoFile
+                {
+                    name = displayName,
+                    path = !string.IsNullOrWhiteSpace(filePath) ? filePath : contentUri,
+                    localPath = !string.IsNullOrWhiteSpace(filePath) ? filePath : contentUri,
+                    url = !string.IsNullOrWhiteSpace(filePath) ? ("file://" + filePath) : contentUri,
+                    is360 = displayName.ToLowerInvariant().Contains("360"),
+                    size = size
+                });
+
+                deduplicate.Add(dedupKey);
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("MediaStore scan failed: " + e.Message);
+        }
+        finally
+        {
+            if (cursor != null)
+            {
+                cursor.Call("close");
+                cursor.Dispose();
+            }
+        }
+    }
+#endif
 
     private bool IsSupportedVideoExtension(string extension)
     {
