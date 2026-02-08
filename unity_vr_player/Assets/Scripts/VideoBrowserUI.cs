@@ -39,6 +39,7 @@ public class VideoBrowserUI : MonoBehaviour
 
     private string idleStatusMessage = "Ready";
     private bool suppressSeekCallback;
+    private bool refreshAfterSettingsReturn;
 
     private PlaybackSnapshot lastSnapshot = PlaybackSnapshot.CreateDefault();
 
@@ -110,13 +111,6 @@ public class VideoBrowserUI : MonoBehaviour
     private IEnumerator InitializeAndRefresh()
     {
         yield return null;
-
-        if (!localFileManager.HasReadableMediaPermission())
-        {
-            localFileManager.RequestReadableMediaPermission();
-            yield return WaitForPermissionRequest(8f);
-        }
-
         RefreshVideoList();
     }
 
@@ -129,6 +123,17 @@ public class VideoBrowserUI : MonoBehaviour
             left -= Time.unscaledDeltaTime;
             yield return null;
         }
+    }
+
+    private void OnApplicationFocus(bool hasFocus)
+    {
+        if (!hasFocus || !refreshAfterSettingsReturn)
+        {
+            return;
+        }
+
+        refreshAfterSettingsReturn = false;
+        RefreshVideoList();
     }
 
     private void Update()
@@ -241,7 +246,7 @@ public class VideoBrowserUI : MonoBehaviour
             return;
         }
 
-        idleStatusMessage = "Scanning local storage...";
+        idleStatusMessage = "Scanning Movies folder...";
 
         bool hasPermission = localFileManager.HasReadableMediaPermission();
         if (!hasPermission)
@@ -249,14 +254,14 @@ public class VideoBrowserUI : MonoBehaviour
             SetPermissionButtonsVisible(true);
             RebuildVideoList(new List<VideoFile>());
 
-            idleStatusMessage = "Storage permission required";
+            idleStatusMessage = "Photos and videos permission required";
             if (localFileManager.WasLastPermissionRequestDeniedAndDontAskAgain())
             {
-                hintText.text = "Permission was denied with Don't ask again. Tap Open Settings and allow Photos and videos.";
+                hintText.text = "Permission was denied with Don't ask again. Tap Open Settings and choose Allow all photos and videos.";
             }
             else
             {
-                hintText.text = "Tap Grant Permission to allow Photos and videos.";
+                hintText.text = "Tap Grant Permission and choose Allow all photos and videos.";
             }
 
             return;
@@ -269,7 +274,7 @@ public class VideoBrowserUI : MonoBehaviour
         if (videos.Count == 0)
         {
             idleStatusMessage = "No playable video found";
-            hintText.text = "Put MP4 files in /storage/emulated/0/Movies or /storage/emulated/0/Download, then tap Refresh.";
+            hintText.text = "Put MP4 files in /storage/emulated/0/Movies, then tap Refresh.";
             return;
         }
 
@@ -370,6 +375,11 @@ public class VideoBrowserUI : MonoBehaviour
 
     private void OnGrantPermissionClicked()
     {
+        if (localFileManager == null || localFileManager.IsPermissionRequestInFlight())
+        {
+            return;
+        }
+
         StartCoroutine(RequestPermissionAndRefresh());
     }
 
@@ -380,6 +390,7 @@ public class VideoBrowserUI : MonoBehaviour
             yield break;
         }
 
+        idleStatusMessage = "Requesting permission...";
         localFileManager.RequestReadableMediaPermission();
         yield return WaitForPermissionRequest(10f);
         RefreshVideoList();
@@ -387,6 +398,8 @@ public class VideoBrowserUI : MonoBehaviour
 
     private void OnOpenSettingsClicked()
     {
+        refreshAfterSettingsReturn = true;
+        idleStatusMessage = "Open Settings and choose Allow all photos and videos.";
         localFileManager?.OpenAppPermissionSettings();
     }
 

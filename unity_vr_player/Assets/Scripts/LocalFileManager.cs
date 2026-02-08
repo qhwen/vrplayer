@@ -20,8 +20,14 @@ public class LocalFileManager : MonoBehaviour
 
     [Header("Scan Settings")]
     [SerializeField] private bool includeCommonMediaFolders = true;
-    [SerializeField, Range(1, 5)] private int scanDepth = 3;
+    [SerializeField, Range(0, 5)] private int scanDepth = 0;
     [SerializeField, Range(20, 500)] private int maxCollectedVideos = 200;
+
+#if UNITY_ANDROID
+    [Header("Android Scan Scope")]
+    [SerializeField] private string androidMoviesDirectory = "/storage/emulated/0/Movies";
+    [SerializeField] private bool includeMoviesSubdirectories;
+#endif
 
     private readonly List<VideoFile> localVideos = new List<VideoFile>();
     private readonly string[] supportedExtensions = { ".mp4", ".mkv", ".mov" };
@@ -105,19 +111,27 @@ public class LocalFileManager : MonoBehaviour
         lastPermissionRequestDenied = false;
         lastPermissionRequestDontAskAgain = false;
 
-        // Delay one frame to avoid requesting too early during startup.
+        float focusTimeout = 5f;
+        while (!Application.isFocused && focusTimeout > 0f)
+        {
+            focusTimeout -= Time.unscaledDeltaTime;
+            yield return null;
+        }
+
+        // Allow UI frame to settle before system permission prompt.
         yield return null;
+
+        if (HasAnyReadableMediaPermission())
+        {
+            permissionRequestInFlight = false;
+            yield break;
+        }
 
         int sdkInt = GetAndroidSdkInt();
 
         if (sdkInt >= 33)
         {
             yield return RequestSinglePermission("android.permission.READ_MEDIA_VIDEO");
-
-            if (!HasAnyReadableMediaPermission() && sdkInt >= 34)
-            {
-                yield return RequestSinglePermission("android.permission.READ_MEDIA_VISUAL_USER_SELECTED");
-            }
         }
         else
         {
@@ -132,12 +146,6 @@ public class LocalFileManager : MonoBehaviour
         int sdkInt = GetAndroidSdkInt();
 
         bool hasMediaVideo = Permission.HasUserAuthorizedPermission("android.permission.READ_MEDIA_VIDEO");
-        bool hasSelectedVisualMedia = Permission.HasUserAuthorizedPermission("android.permission.READ_MEDIA_VISUAL_USER_SELECTED");
-
-        if (sdkInt >= 34)
-        {
-            return hasMediaVideo || hasSelectedVisualMedia;
-        }
 
         if (sdkInt >= 33)
         {
@@ -196,12 +204,17 @@ public class LocalFileManager : MonoBehaviour
 
         if (!completed)
         {
-            denied = true;
+            denied = !Permission.HasUserAuthorizedPermission(permission);
         }
 
         if (denied)
         {
             lastPermissionRequestDenied = true;
+        }
+
+        if (denied && !deniedDontAskAgain)
+        {
+            deniedDontAskAgain = !Permission.ShouldShowRequestPermissionRationale(permission);
         }
 
         if (deniedDontAskAgain)
@@ -246,7 +259,7 @@ public class LocalFileManager : MonoBehaviour
             AddLocalVideo(path);
         }
 #elif UNITY_ANDROID
-        Debug.LogWarning("Android file picker plugin is not integrated yet. Put video files into Movies or Download folder.");
+        Debug.LogWarning("Android file picker plugin is not integrated yet. Put video files into Movies folder.");
 #elif UNITY_IOS
         Debug.LogWarning("iOS file picker plugin is not integrated yet.");
 #else
@@ -284,6 +297,16 @@ public class LocalFileManager : MonoBehaviour
     {
         localVideos.Clear();
 
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (!HasAnyReadableMediaPermission())
+        {
+            Debug.Log("Skip scan: readable media permission missing.");
+            return;
+        }
+
+        HashSet<string> deduplicate = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddVideosFromAndroidMediaStore(deduplicate);
+#else
         HashSet<string> deduplicate = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         List<string> roots = BuildSearchRoots();
 
@@ -294,13 +317,7 @@ public class LocalFileManager : MonoBehaviour
                 break;
             }
 
-            ScanDirectoryRecursive(roots[i], deduplicate, 0);
-        }
-
-#if UNITY_ANDROID && !UNITY_EDITOR
-        if (localVideos.Count == 0 && HasAnyReadableMediaPermission())
-        {
-            AddVideosFromAndroidMediaStore(deduplicate);
+            ScanDirectoryRecursive(roots[i], deduplicate, 0, ShouldScanSubdirectories());
         }
 #endif
 
@@ -308,29 +325,31 @@ public class LocalFileManager : MonoBehaviour
         Debug.Log("Refreshed local videos: " + localVideos.Count);
     }
 
+    private bool ShouldScanSubdirectories()
+    {
+#if UNITY_ANDROID
+        return includeMoviesSubdirectories;
+#else
+        return true;
+#endif
+    }
+
     private List<string> BuildSearchRoots()
     {
         List<string> roots = new List<string>();
 
+#if UNITY_ANDROID
+        AddSearchRoot(roots, androidMoviesDirectory);
+        AddSearchRoot(roots, "/storage/self/primary/Movies");
+#else
         AddSearchRoot(roots, cacheDirectory);
         AddSearchRoot(roots, Application.persistentDataPath);
 
-        if (!includeCommonMediaFolders)
+        if (includeCommonMediaFolders)
         {
-            return roots;
+            AddSearchRoot(roots, Environment.GetFolderPath(Environment.SpecialFolder.MyVideos));
+            AddSearchRoot(roots, Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
         }
-
-#if UNITY_ANDROID
-        AddSearchRoot(roots, "/storage/emulated/0/Movies");
-        AddSearchRoot(roots, "/storage/emulated/0/Download");
-        AddSearchRoot(roots, "/storage/emulated/0/DCIM/Camera");
-        AddSearchRoot(roots, "/storage/self/primary/Movies");
-        AddSearchRoot(roots, "/storage/self/primary/Download");
-        AddSearchRoot(roots, "/sdcard/Movies");
-        AddSearchRoot(roots, "/sdcard/Download");
-#else
-        AddSearchRoot(roots, Environment.GetFolderPath(Environment.SpecialFolder.MyVideos));
-        AddSearchRoot(roots, Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
 #endif
 
         return roots;
@@ -355,7 +374,7 @@ public class LocalFileManager : MonoBehaviour
         roots.Add(normalized);
     }
 
-    private void ScanDirectoryRecursive(string directory, HashSet<string> deduplicate, int depth)
+    private void ScanDirectoryRecursive(string directory, HashSet<string> deduplicate, int depth, bool allowSubdirectories)
     {
         if (string.IsNullOrWhiteSpace(directory) || depth > scanDepth)
         {
@@ -390,7 +409,7 @@ public class LocalFileManager : MonoBehaviour
             // Ignore permission denied folders.
         }
 
-        if (depth >= scanDepth)
+        if (!allowSubdirectories || depth >= scanDepth)
         {
             return;
         }
@@ -405,7 +424,7 @@ public class LocalFileManager : MonoBehaviour
                     return;
                 }
 
-                ScanDirectoryRecursive(subDirectories[i], deduplicate, depth + 1);
+                ScanDirectoryRecursive(subDirectories[i], deduplicate, depth + 1, allowSubdirectories);
             }
         }
         catch
@@ -478,12 +497,25 @@ public class LocalFileManager : MonoBehaviour
                 "relative_path"
             };
 
+            string selection;
+            string[] selectionArgs;
+            if (includeMoviesSubdirectories)
+            {
+                selection = "relative_path=? OR relative_path=? OR relative_path LIKE ?";
+                selectionArgs = new[] { "Movies", "Movies/", "Movies/%" };
+            }
+            else
+            {
+                selection = "relative_path=? OR relative_path=?";
+                selectionArgs = new[] { "Movies", "Movies/" };
+            }
+
             cursor = resolver.Call<AndroidJavaObject>(
                 "query",
                 externalContentUri,
                 projection,
-                null,
-                null,
+                selection,
+                selectionArgs,
                 "date_added DESC");
 
             if (cursor == null)
@@ -519,6 +551,11 @@ public class LocalFileManager : MonoBehaviour
                 string relativePath = relativePathIndex >= 0 ? cursor.Call<string>("getString", relativePathIndex) : string.Empty;
                 long size = sizeIndex >= 0 ? cursor.Call<long>("getLong", sizeIndex) : 0;
                 long mediaId = idIndex >= 0 ? cursor.Call<long>("getLong", idIndex) : -1;
+
+                if (!MatchesMoviesScope(filePath, relativePath))
+                {
+                    continue;
+                }
 
                 string contentUri = mediaId >= 0 ? "content://media/external/video/media/" + mediaId : string.Empty;
 
@@ -564,6 +601,46 @@ public class LocalFileManager : MonoBehaviour
                 cursor.Dispose();
             }
         }
+    }
+
+    private bool MatchesMoviesScope(string filePath, string relativePath)
+    {
+        if (!string.IsNullOrWhiteSpace(relativePath))
+        {
+            string normalizedRelative = relativePath.Replace("\\", "/").Trim().TrimStart('/').ToLowerInvariant();
+            if (normalizedRelative.EndsWith("/"))
+            {
+                normalizedRelative = normalizedRelative.Substring(0, normalizedRelative.Length - 1);
+            }
+
+            if (includeMoviesSubdirectories)
+            {
+                return normalizedRelative == "movies" || normalizedRelative.StartsWith("movies/");
+            }
+
+            return normalizedRelative == "movies";
+        }
+
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            return false;
+        }
+
+        string normalizedPath = filePath.Replace("\\", "/").ToLowerInvariant();
+        const string marker = "/movies/";
+        int markerIndex = normalizedPath.IndexOf(marker, StringComparison.Ordinal);
+        if (markerIndex < 0)
+        {
+            return false;
+        }
+
+        if (includeMoviesSubdirectories)
+        {
+            return true;
+        }
+
+        string trailing = normalizedPath.Substring(markerIndex + marker.Length);
+        return trailing.IndexOf('/') < 0;
     }
 #endif
 
