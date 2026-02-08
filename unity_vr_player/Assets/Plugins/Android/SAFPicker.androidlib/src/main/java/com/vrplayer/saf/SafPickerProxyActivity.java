@@ -10,8 +10,6 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
 
-import com.unity3d.player.UnityPlayer;
-
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -184,7 +182,7 @@ public class SafPickerProxyActivity extends Activity {
         result.put("error", "");
         result.put("videos", videosArray);
 
-        UnityPlayer.UnitySendMessage(receiverObject, callbackMethod, result.toString());
+        sendUnityMessage(result.toString());
     }
 
     private void sendCancelled() {
@@ -193,9 +191,9 @@ public class SafPickerProxyActivity extends Activity {
             result.put("cancelled", true);
             result.put("error", "");
             result.put("videos", new JSONArray());
-            UnityPlayer.UnitySendMessage(receiverObject, callbackMethod, result.toString());
+            sendUnityMessage(result.toString());
         } catch (Exception ignored) {
-            UnityPlayer.UnitySendMessage(receiverObject, callbackMethod, "");
+            sendUnityMessage("");
         }
     }
 
@@ -205,9 +203,19 @@ public class SafPickerProxyActivity extends Activity {
             result.put("cancelled", false);
             result.put("error", message == null ? "unknown" : message);
             result.put("videos", new JSONArray());
-            UnityPlayer.UnitySendMessage(receiverObject, callbackMethod, result.toString());
+            sendUnityMessage(result.toString());
         } catch (Exception ignored) {
-            UnityPlayer.UnitySendMessage(receiverObject, callbackMethod, "");
+            sendUnityMessage("");
+        }
+    }
+
+    private void sendUnityMessage(String payload) {
+        try {
+            Class<?> unityPlayerClass = Class.forName("com.unity3d.player.UnityPlayer");
+            unityPlayerClass.getMethod("UnitySendMessage", String.class, String.class, String.class)
+                .invoke(null, receiverObject, callbackMethod, payload);
+        } catch (Exception ignored) {
+            // Ignore to avoid crash when Unity bridge is unavailable.
         }
     }
 }

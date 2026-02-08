@@ -3,14 +3,12 @@ package com.vrplayer.saf;
 import android.app.Activity;
 import android.content.Intent;
 
-import com.unity3d.player.UnityPlayer;
-
 public final class SafPickerBridge {
     private SafPickerBridge() {
     }
 
     public static void launchVideoPicker(final String receiverObject, final String callbackMethod) {
-        final Activity activity = UnityPlayer.currentActivity;
+        final Activity activity = getUnityActivity();
         if (activity == null) {
             return;
         }
@@ -24,5 +22,19 @@ public final class SafPickerBridge {
                 activity.startActivity(intent);
             }
         });
+    }
+
+    private static Activity getUnityActivity() {
+        try {
+            Class<?> unityPlayerClass = Class.forName("com.unity3d.player.UnityPlayer");
+            Object activity = unityPlayerClass.getField("currentActivity").get(null);
+            if (activity instanceof Activity) {
+                return (Activity) activity;
+            }
+        } catch (Exception ignored) {
+            // Ignore and return null.
+        }
+
+        return null;
     }
 }
