@@ -33,7 +33,6 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/Unity_Technologies_ApS.gpg] https://hub.unity3d.com/linux/repos/deb stable main" | sudo tee /etc/apt/sources.list.d/unityhub.list
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends unityhub
-          /opt/unityhub/unityhub --version || true
 
       - name: Activate Unity License
         uses: buildalon/activate-unity-license@v2
@@ -44,14 +43,29 @@ jobs:
           username: ${{ secrets.UNITY_USERNAME }}
           password: ${{ secrets.UNITY_PASSWORD }}
 
+      - name: Export Unity License To Env
+        shell: bash
+        run: |
+          LICENSE_PATH="$HOME/.local/share/unity3d/Unity/Unity_lic.ulf"
+          if [ ! -f "$LICENSE_PATH" ]; then
+            echo "License file not found at $LICENSE_PATH"
+            exit 1
+          fi
+          {
+            echo "UNITY_LICENSE<<EOF"
+            cat "$LICENSE_PATH"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
       - name: Build Android
         uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ env.UNITY_LICENSE }}
         with:
           projectPath: unity_vr_player
           unityVersion: 2022.3.40f1
           targetPlatform: Android
           buildMethod: BuildAndroid.PerformBuild
-          skipActivation: true
           androidKeystoreName: user.keystore
           androidKeystoreBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           androidKeystorePass: ${{ secrets.ANDROID_KEYSTORE_PASS }}
