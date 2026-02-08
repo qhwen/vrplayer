@@ -46,8 +46,8 @@ Last Updated: 2026-02-08
 
 ## Round Validation (2026-02-08)
 
-- Commits: `8bc45b9`, `99c309d`.
-- CI build: `https://github.com/qhwen/vrplayer/actions/runs/21798934684` (success).
+- Commits: `8bc45b9`, `99c309d`, `11001c0`.
+- CI build: `https://github.com/qhwen/vrplayer/actions/runs/21799361879` (success).
 - Built APK: `downloads/VRVideoPlayer.apk`.
 - Device validation focus:
   - Verify `Select Videos` works on Android 15 without granting media permission.
