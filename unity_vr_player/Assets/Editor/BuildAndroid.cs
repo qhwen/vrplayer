@@ -1,4 +1,4 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
 using System.IO;
 using System.Linq;
@@ -26,16 +26,16 @@ public static class BuildAndroid
 
             if (!EditorUserBuildSettings.SwitchActiveBuildTarget(BuildTargetGroup.Android, BuildTarget.Android))
             {
-                throw new Exception("切换 Android 构建目标失败。");
+                throw new Exception("Switching Android build target failed.");
             }
 
-            string outputDir = Environment.GetEnvironmentVariable("UNITY_ANDROID_OUTPUT_DIR");
+            string outputDir = GetFirstEnvironmentVariable("UNITY_ANDROID_OUTPUT_DIR");
             if (string.IsNullOrWhiteSpace(outputDir))
             {
                 outputDir = DefaultOutputDir;
             }
 
-            string apkName = Environment.GetEnvironmentVariable("UNITY_ANDROID_APK_NAME");
+            string apkName = GetFirstEnvironmentVariable("UNITY_ANDROID_APK_NAME");
             if (string.IsNullOrWhiteSpace(apkName))
             {
                 apkName = DefaultApkName;
@@ -44,38 +44,10 @@ public static class BuildAndroid
             Directory.CreateDirectory(outputDir);
             string outputPath = Path.GetFullPath(Path.Combine(outputDir, apkName));
 
-            string productName = Environment.GetEnvironmentVariable("UNITY_PRODUCT_NAME");
-            if (!string.IsNullOrWhiteSpace(productName))
-            {
-                PlayerSettings.productName = productName;
-            }
-
-            string companyName = Environment.GetEnvironmentVariable("UNITY_COMPANY_NAME");
-            if (!string.IsNullOrWhiteSpace(companyName))
-            {
-                PlayerSettings.companyName = companyName;
-            }
-
-            string bundleIdentifier = Environment.GetEnvironmentVariable("UNITY_BUNDLE_IDENTIFIER");
-            if (!string.IsNullOrWhiteSpace(bundleIdentifier))
-            {
-                PlayerSettings.SetApplicationIdentifier(BuildTargetGroup.Android, bundleIdentifier);
-            }
-
-            string versionName = Environment.GetEnvironmentVariable("UNITY_VERSION_NAME");
-            if (!string.IsNullOrWhiteSpace(versionName))
-            {
-                PlayerSettings.bundleVersion = versionName;
-            }
-
-            string versionCodeRaw = Environment.GetEnvironmentVariable("UNITY_VERSION_CODE");
-            if (int.TryParse(versionCodeRaw, out int versionCode) && versionCode > 0)
-            {
-                PlayerSettings.Android.bundleVersionCode = versionCode;
-            }
+            ApplyBuildMetadata();
 
             BuildOptions buildOptions = BuildOptions.None;
-            string developmentBuild = Environment.GetEnvironmentVariable("UNITY_DEVELOPMENT_BUILD");
+            string developmentBuild = GetFirstEnvironmentVariable("UNITY_DEVELOPMENT_BUILD");
             if (string.Equals(developmentBuild, "true", StringComparison.OrdinalIgnoreCase))
             {
                 buildOptions |= BuildOptions.Development;
@@ -88,7 +60,7 @@ public static class BuildAndroid
 
             if (scenes.Length == 0)
             {
-                throw new Exception("Build Settings 中没有启用场景。");
+                throw new Exception("No enabled scenes in Build Settings.");
             }
 
             BuildPlayerOptions playerOptions = new BuildPlayerOptions
@@ -102,17 +74,104 @@ public static class BuildAndroid
             BuildReport report = BuildPipeline.BuildPlayer(playerOptions);
             if (report.summary.result != BuildResult.Succeeded)
             {
-                throw new Exception("Android 构建失败，详情见 Editor log。");
+                throw new Exception("Android build failed. Check Editor log for details.");
             }
 
-            Debug.Log("Android 构建成功: " + outputPath);
+            Debug.Log("Android build succeeded: " + outputPath);
             EditorApplication.Exit(0);
         }
         catch (Exception ex)
         {
-            Debug.LogError("BuildAndroid.PerformBuild 失败: " + ex.Message);
+            Debug.LogError("BuildAndroid.PerformBuild failed: " + ex.Message);
             EditorApplication.Exit(1);
         }
+    }
+
+    private static void ApplyBuildMetadata()
+    {
+        string productName = GetFirstEnvironmentVariable("UNITY_PRODUCT_NAME");
+        if (!string.IsNullOrWhiteSpace(productName))
+        {
+            PlayerSettings.productName = productName;
+        }
+
+        string companyName = GetFirstEnvironmentVariable("UNITY_COMPANY_NAME");
+        if (!string.IsNullOrWhiteSpace(companyName))
+        {
+            PlayerSettings.companyName = companyName;
+        }
+
+        string bundleIdentifier = GetFirstEnvironmentVariable("UNITY_BUNDLE_IDENTIFIER");
+        if (!string.IsNullOrWhiteSpace(bundleIdentifier))
+        {
+            PlayerSettings.SetApplicationIdentifier(BuildTargetGroup.Android, bundleIdentifier);
+        }
+
+        int versionCode = ResolveVersionCode();
+        string versionName = ResolveVersionName(versionCode);
+
+        PlayerSettings.Android.bundleVersionCode = versionCode;
+        PlayerSettings.bundleVersion = versionName;
+
+        Debug.Log("Resolved build metadata: versionName=" + versionName + ", versionCode=" + versionCode);
+    }
+
+    private static int ResolveVersionCode()
+    {
+        string versionCodeRaw = GetFirstEnvironmentVariable("UNITY_VERSION_CODE", "GITHUB_RUN_NUMBER", "BUILD_NUMBER");
+        if (int.TryParse(versionCodeRaw, out int versionCode) && versionCode > 0)
+        {
+            return versionCode;
+        }
+
+        long unixMinutes = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 60L;
+        if (unixMinutes < 1L)
+        {
+            unixMinutes = 1L;
+        }
+
+        if (unixMinutes > int.MaxValue)
+        {
+            return int.MaxValue;
+        }
+
+        return (int)unixMinutes;
+    }
+
+    private static string ResolveVersionName(int versionCode)
+    {
+        string versionName = GetFirstEnvironmentVariable("UNITY_VERSION_NAME", "VERSION_NAME");
+        if (!string.IsNullOrWhiteSpace(versionName))
+        {
+            return versionName;
+        }
+
+        return "1.0." + versionCode;
+    }
+
+    private static string GetFirstEnvironmentVariable(params string[] names)
+    {
+        if (names == null)
+        {
+            return string.Empty;
+        }
+
+        for (int i = 0; i < names.Length; i++)
+        {
+            string name = names[i];
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            string value = Environment.GetEnvironmentVariable(name);
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+
+        return string.Empty;
     }
 
     private static void EnsureBuildSceneExists()

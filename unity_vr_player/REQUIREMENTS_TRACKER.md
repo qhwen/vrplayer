@@ -12,6 +12,7 @@ Last Updated: 2026-02-08
 - R-006: If permission is denied with "Don't ask again", app should route user to app settings.
 - R-007: Auto scan scope must be limited to `Movies` folder only (optional subfolders), not full storage scan.
 - R-008: Keep this file as the dedicated requirement list and re-check after each change.
+- R-009: APK versionName/versionCode must be visibly incremented in each CI build to avoid installing stale package.
 
 ## Implementation Mapping
 
@@ -41,6 +42,9 @@ Last Updated: 2026-02-08
   - Android scan first uses direct `Movies` directory roots only; MediaStore is fallback for `Movies` scope only.
 - R-008:
   - This file is maintained and updated in this round.
+- R-009:
+  - `unity_vr_player/Assets/Editor/BuildAndroid.cs`
+  - Build metadata now always resolves non-empty versionCode/versionName (from env or fallback), then writes to PlayerSettings before build.
 
 ## Verification Checklist
 
@@ -52,10 +56,12 @@ Last Updated: 2026-02-08
 - [x] R-006 covered in code.
 - [x] R-007 covered in code.
 - [x] R-008 covered in process/file.
+- [x] R-009 covered in code.
 
 ## Round Validation (2026-02-08)
 
 - Local changes include:
+  - CI build metadata hardening: force non-empty versionName/versionCode assignment before build.
   - Permission request flow wiring for `Scan Settings`.
   - Android 14/15 partial media permission compatibility handling.
   - `Movies` directory-first scan path.
@@ -66,3 +72,6 @@ Last Updated: 2026-02-08
   - `Scan Settings` should show runtime prompt on first request (or route to settings when blocked).
   - `Select Videos` should still work without granting scan permission.
   - `Movies` scan should stop at `Movies` scope and list entries should be tappable.
+
+
+
