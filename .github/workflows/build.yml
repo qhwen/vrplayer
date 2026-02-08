@@ -1,4 +1,4 @@
-﻿name: Build Unity VR Player
+name: Build Unity VR Player
 
 on:
   push:
@@ -7,6 +7,10 @@ on:
     tags:
       - v*
   workflow_dispatch:
+
+concurrency:
+  group: build-android-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-android:
@@ -40,7 +44,7 @@ jobs:
           UNITY_HUB_PATH: /opt/unityhub/unityhub
         with:
           license: Personal
-          username: ${{ secrets.UNITY_USERNAME }}
+          username: ${{ secrets.UNITY_EMAIL || secrets.UNITY_USERNAME }}
           password: ${{ secrets.UNITY_PASSWORD }}
 
       - name: Export Unity License To Env
@@ -59,7 +63,7 @@ jobs:
         uses: game-ci/unity-builder@v4
         env:
           UNITY_LICENSE: ${{ env.UNITY_LICENSE }}
-          UNITY_EMAIL: ${{ secrets.UNITY_USERNAME }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL || secrets.UNITY_USERNAME }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
           projectPath: unity_vr_player
@@ -93,3 +97,4 @@ jobs:
             unity_vr_player/unity-build.log
             unity_vr_player/Library/PlayerDataCache/**/Editor.log
           if-no-files-found: warn
+
