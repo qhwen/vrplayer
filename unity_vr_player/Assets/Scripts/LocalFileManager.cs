@@ -27,6 +27,7 @@ public class LocalFileManager : MonoBehaviour
     private readonly string[] supportedExtensions = { ".mp4", ".mkv", ".mov" };
 
     private string cacheDirectory = string.Empty;
+    private ICacheService cacheService;
 
     private bool permissionRequestInFlight;
 
@@ -55,6 +56,7 @@ public class LocalFileManager : MonoBehaviour
             Directory.CreateDirectory(cacheDirectory);
         }
 
+        cacheService = new FileCacheService(cacheDirectory);
         Debug.Log("Cache directory: " + cacheDirectory);
     }
 
@@ -568,6 +570,7 @@ public class LocalFileManager : MonoBehaviour
 
             Directory.Delete(cacheDirectory, true);
             Directory.CreateDirectory(cacheDirectory);
+            cacheService = new FileCacheService(cacheDirectory);
             localVideos.Clear();
 
             Debug.Log("Cache cleared");
@@ -578,6 +581,23 @@ public class LocalFileManager : MonoBehaviour
         }
     }
 
+    public ICacheService GetCacheService()
+    {
+        return cacheService;
+    }
+
+    public string GetCachePath(string cacheKey, string extension = ".mp4")
+    {
+        if (cacheService == null)
+        {
+            string key = string.IsNullOrWhiteSpace(cacheKey) ? Guid.NewGuid().ToString("N") : cacheKey;
+            string ext = string.IsNullOrWhiteSpace(extension) ? ".mp4" : (extension.StartsWith(".") ? extension : "." + extension);
+            return Path.Combine(cacheDirectory, key + ext);
+        }
+
+        return cacheService.GetPath(cacheKey, extension);
+    }
+
     public string GetCacheDirectory()
     {
         return cacheDirectory;
@@ -585,6 +605,11 @@ public class LocalFileManager : MonoBehaviour
 
     public long GetCacheSize()
     {
+        if (cacheService != null)
+        {
+            return cacheService.GetTotalSizeBytes();
+        }
+
         if (!Directory.Exists(cacheDirectory))
         {
             return 0;

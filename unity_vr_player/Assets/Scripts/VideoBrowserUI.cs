@@ -10,8 +10,9 @@ public class VideoBrowserUI : MonoBehaviour
 {
     private const int MaxVisibleItems = 60;
 
-    private VRVideoPlayer videoPlayer;
+    private VRVideoPlayer vrVideoPlayer;
     private LocalFileManager localFileManager;
+    private IPlaybackService playbackService;
 
     private Canvas canvas;
     private RectTransform listContent;
@@ -19,25 +20,40 @@ public class VideoBrowserUI : MonoBehaviour
     private Text statusText;
     private Text currentVideoText;
     private Text hintText;
+    private Text playbackTimeText;
 
     private Button refreshButton;
     private Button grantPermissionButton;
     private Button openSettingsButton;
     private Button pauseResumeButton;
     private Button stopButton;
+    private Button backToListButton;
+
+    private Slider progressSlider;
 
     private readonly List<Button> generatedButtons = new List<Button>();
 
     private string idleStatusMessage = "Ready";
+    private bool suppressSeekCallback;
+
+    private PlaybackSnapshot lastSnapshot = PlaybackSnapshot.CreateDefault();
 
     private void Start()
     {
-        videoPlayer = FindObjectOfType<VRVideoPlayer>();
+        vrVideoPlayer = FindObjectOfType<VRVideoPlayer>();
         localFileManager = FindObjectOfType<LocalFileManager>();
 
-        if (videoPlayer == null || localFileManager == null)
+        if (vrVideoPlayer == null || localFileManager == null)
         {
             Debug.LogError("VideoBrowserUI initialization failed: missing dependencies.");
+            enabled = false;
+            return;
+        }
+
+        playbackService = vrVideoPlayer.GetPlaybackService();
+        if (playbackService == null)
+        {
+            Debug.LogError("VideoBrowserUI initialization failed: playback service is missing.");
             enabled = false;
             return;
         }
@@ -58,14 +74,40 @@ public class VideoBrowserUI : MonoBehaviour
         }
 
         BuildPanel();
+        RegisterPlaybackEvents();
         StartCoroutine(InitializeAndRefresh());
+    }
+
+    private void OnDestroy()
+    {
+        if (playbackService != null)
+        {
+            playbackService.StateChanged -= OnPlaybackStateChanged;
+            playbackService.PlaybackUpdated -= OnPlaybackUpdated;
+            playbackService.ErrorOccurred -= OnPlaybackError;
+        }
+
+        if (progressSlider != null)
+        {
+            progressSlider.onValueChanged.RemoveListener(OnProgressChanged);
+        }
+    }
+
+    private void RegisterPlaybackEvents()
+    {
+        playbackService.StateChanged += OnPlaybackStateChanged;
+        playbackService.PlaybackUpdated += OnPlaybackUpdated;
+        playbackService.ErrorOccurred += OnPlaybackError;
+
+        OnPlaybackUpdated(playbackService.Snapshot);
+        UpdateRuntimeStatus();
     }
 
     private IEnumerator InitializeAndRefresh()
     {
         yield return null;
 
-        if (localFileManager != null && !localFileManager.HasReadableMediaPermission())
+        if (!localFileManager.HasReadableMediaPermission())
         {
             localFileManager.RequestReadableMediaPermission();
             yield return WaitForPermissionRequest(4f);
@@ -87,11 +129,6 @@ public class VideoBrowserUI : MonoBehaviour
 
     private void Update()
     {
-        if (videoPlayer == null)
-        {
-            return;
-        }
-
         UpdateControlButtons();
         UpdateRuntimeStatus();
     }
@@ -105,7 +142,7 @@ public class VideoBrowserUI : MonoBehaviour
 
         RectTransform panelRect = panelObject.AddComponent<RectTransform>();
         panelRect.anchorMin = new Vector2(0.03f, 0.02f);
-        panelRect.anchorMax = new Vector2(0.97f, 0.52f);
+        panelRect.anchorMax = new Vector2(0.97f, 0.56f);
         panelRect.offsetMin = Vector2.zero;
         panelRect.offsetMax = Vector2.zero;
 
@@ -113,67 +150,46 @@ public class VideoBrowserUI : MonoBehaviour
         panelBackground.color = new Color(0f, 0f, 0f, 0.72f);
 
         CreateAnchoredLabel(panelObject.transform, "Title", "Local Video Library", font, 38, TextAnchor.UpperCenter,
-            new Vector2(0.02f, 0.88f), new Vector2(0.98f, 1f));
+            new Vector2(0.02f, 0.90f), new Vector2(0.98f, 1f));
 
         statusText = CreateAnchoredLabel(panelObject.transform, "Status", "Loading videos...", font, 28, TextAnchor.UpperCenter,
-            new Vector2(0.02f, 0.78f), new Vector2(0.98f, 0.88f));
+            new Vector2(0.02f, 0.82f), new Vector2(0.98f, 0.90f));
 
-        currentVideoText = CreateAnchoredLabel(panelObject.transform, "CurrentVideo", "No video selected", font, 24, TextAnchor.MiddleLeft,
-            new Vector2(0.02f, 0.70f), new Vector2(0.98f, 0.78f));
+        currentVideoText = CreateAnchoredLabel(panelObject.transform, "CurrentVideo", "No video selected", font, 22, TextAnchor.MiddleLeft,
+            new Vector2(0.02f, 0.74f), new Vector2(0.98f, 0.82f));
 
-        GameObject controlRow = new GameObject("ControlRow");
-        controlRow.transform.SetParent(panelObject.transform, false);
-
-        RectTransform controlRowRect = controlRow.AddComponent<RectTransform>();
-        controlRowRect.anchorMin = new Vector2(0.02f, 0.60f);
-        controlRowRect.anchorMax = new Vector2(0.98f, 0.68f);
-        controlRowRect.offsetMin = Vector2.zero;
-        controlRowRect.offsetMax = Vector2.zero;
-
-        HorizontalLayoutGroup controlLayout = controlRow.AddComponent<HorizontalLayoutGroup>();
-        controlLayout.spacing = 14f;
-        controlLayout.childControlHeight = true;
-        controlLayout.childControlWidth = true;
-        controlLayout.childForceExpandWidth = true;
-
+        GameObject controlRow = CreateHorizontalRow(panelObject.transform, "ControlRow", new Vector2(0.02f, 0.65f), new Vector2(0.98f, 0.74f));
         refreshButton = CreateActionButton(controlRow.transform, "RefreshButton", "Refresh", font);
         pauseResumeButton = CreateActionButton(controlRow.transform, "PauseResumeButton", "Pause", font);
         stopButton = CreateActionButton(controlRow.transform, "StopButton", "Stop", font);
+        backToListButton = CreateActionButton(controlRow.transform, "BackButton", "Back", font);
 
         refreshButton.onClick.AddListener(RefreshVideoList);
         pauseResumeButton.onClick.AddListener(OnPauseResumeClicked);
         stopButton.onClick.AddListener(OnStopClicked);
+        backToListButton.onClick.AddListener(OnBackToListClicked);
 
-        GameObject permissionRow = new GameObject("PermissionRow");
-        permissionRow.transform.SetParent(panelObject.transform, false);
+        GameObject progressRow = CreateHorizontalRow(panelObject.transform, "ProgressRow", new Vector2(0.02f, 0.57f), new Vector2(0.98f, 0.65f));
+        progressSlider = CreateProgressSlider(progressRow.transform, "ProgressSlider");
+        progressSlider.onValueChanged.AddListener(OnProgressChanged);
+        playbackTimeText = CreateFixedLabel(progressRow.transform, "TimeLabel", "00:00 / 00:00", font, 20, 220f);
 
-        RectTransform permissionRowRect = permissionRow.AddComponent<RectTransform>();
-        permissionRowRect.anchorMin = new Vector2(0.02f, 0.52f);
-        permissionRowRect.anchorMax = new Vector2(0.98f, 0.60f);
-        permissionRowRect.offsetMin = Vector2.zero;
-        permissionRowRect.offsetMax = Vector2.zero;
-
-        HorizontalLayoutGroup permissionLayout = permissionRow.AddComponent<HorizontalLayoutGroup>();
-        permissionLayout.spacing = 14f;
-        permissionLayout.childControlHeight = true;
-        permissionLayout.childControlWidth = true;
-        permissionLayout.childForceExpandWidth = true;
-
+        GameObject permissionRow = CreateHorizontalRow(panelObject.transform, "PermissionRow", new Vector2(0.02f, 0.49f), new Vector2(0.98f, 0.57f));
         grantPermissionButton = CreateActionButton(permissionRow.transform, "GrantPermissionButton", "Grant Permission", font);
         openSettingsButton = CreateActionButton(permissionRow.transform, "OpenSettingsButton", "Open Settings", font);
 
         grantPermissionButton.onClick.AddListener(OnGrantPermissionClicked);
         openSettingsButton.onClick.AddListener(OnOpenSettingsClicked);
 
-        hintText = CreateAnchoredLabel(panelObject.transform, "Hint", "", font, 20, TextAnchor.UpperLeft,
-            new Vector2(0.02f, 0.45f), new Vector2(0.98f, 0.52f));
+        hintText = CreateAnchoredLabel(panelObject.transform, "Hint", "", font, 19, TextAnchor.UpperLeft,
+            new Vector2(0.02f, 0.42f), new Vector2(0.98f, 0.49f));
 
         GameObject scrollObject = new GameObject("VideoScroll");
         scrollObject.transform.SetParent(panelObject.transform, false);
 
         RectTransform scrollRect = scrollObject.AddComponent<RectTransform>();
         scrollRect.anchorMin = new Vector2(0.02f, 0.04f);
-        scrollRect.anchorMax = new Vector2(0.98f, 0.45f);
+        scrollRect.anchorMax = new Vector2(0.98f, 0.42f);
         scrollRect.offsetMin = Vector2.zero;
         scrollRect.offsetMax = Vector2.zero;
 
@@ -287,17 +303,15 @@ public class VideoBrowserUI : MonoBehaviour
         for (int i = 0; i < count; i++)
         {
             VideoFile selectedFile = videos[i];
-
             Button itemButton = CreateListItemButton(listContent, "Video_" + i, BuildButtonText(selectedFile), font);
             itemButton.onClick.AddListener(() => PlayVideo(selectedFile));
-
             generatedButtons.Add(itemButton);
         }
     }
 
     private void PlayVideo(VideoFile file)
     {
-        if (file == null || videoPlayer == null)
+        if (file == null || playbackService == null)
         {
             return;
         }
@@ -317,7 +331,14 @@ public class VideoBrowserUI : MonoBehaviour
         idleStatusMessage = "Preparing: " + file.name;
         currentVideoText.text = "Selected: " + file.name;
 
-        videoPlayer.PlayVideo(path);
+        if (!playbackService.Open(path))
+        {
+            PlaybackError error = playbackService.LastError;
+            statusText.text = "Playback failed [" + error.code + "]: " + error.message;
+            return;
+        }
+
+        playbackService.Play();
     }
 
     private void OnGrantPermissionClicked()
@@ -339,71 +360,137 @@ public class VideoBrowserUI : MonoBehaviour
 
     private void OnOpenSettingsClicked()
     {
-        if (localFileManager == null)
-        {
-            return;
-        }
-
-        localFileManager.OpenAppPermissionSettings();
+        localFileManager?.OpenAppPermissionSettings();
     }
 
     private void OnPauseResumeClicked()
     {
-        if (videoPlayer == null)
+        if (playbackService == null)
         {
             return;
         }
 
-        if (videoPlayer.GetIsPlaying())
+        if (playbackService.State == PlaybackState.Playing)
         {
-            videoPlayer.PauseVideo();
+            playbackService.Pause();
+            return;
         }
-        else
-        {
-            videoPlayer.ResumeVideo();
-        }
+
+        playbackService.Play();
     }
 
     private void OnStopClicked()
     {
-        if (videoPlayer == null)
+        playbackService?.Stop();
+        idleStatusMessage = "Stopped";
+    }
+
+    private void OnBackToListClicked()
+    {
+        playbackService?.Stop();
+
+        if (currentVideoText != null)
+        {
+            currentVideoText.text = "No video selected";
+        }
+
+        if (progressSlider != null)
+        {
+            suppressSeekCallback = true;
+            progressSlider.value = 0f;
+            suppressSeekCallback = false;
+        }
+
+        if (playbackTimeText != null)
+        {
+            playbackTimeText.text = "00:00 / 00:00";
+        }
+
+        idleStatusMessage = "Back to list";
+    }
+
+    private void OnProgressChanged(float value)
+    {
+        if (suppressSeekCallback || playbackService == null || !playbackService.HasSource)
         {
             return;
         }
 
-        videoPlayer.StopVideo();
-        idleStatusMessage = "Stopped";
+        float duration = Mathf.Max(0f, lastSnapshot.durationSeconds);
+        if (duration <= 0.01f)
+        {
+            return;
+        }
+
+        playbackService.Seek(value * duration);
+    }
+
+    private void OnPlaybackStateChanged(PlaybackState state)
+    {
+        UpdateRuntimeStatus();
+    }
+
+    private void OnPlaybackUpdated(PlaybackSnapshot snapshot)
+    {
+        lastSnapshot = snapshot;
+
+        if (progressSlider != null)
+        {
+            suppressSeekCallback = true;
+            progressSlider.value = snapshot.normalizedProgress;
+            suppressSeekCallback = false;
+        }
+
+        if (playbackTimeText != null)
+        {
+            playbackTimeText.text = FormatTime(snapshot.positionSeconds) + " / " + FormatTime(snapshot.durationSeconds);
+        }
+
+        UpdateRuntimeStatus();
+    }
+
+    private void OnPlaybackError(PlaybackError error)
+    {
+        if (statusText == null)
+        {
+            return;
+        }
+
+        statusText.text = "Playback failed [" + error.code + "]: " + error.message;
     }
 
     private void UpdateControlButtons()
     {
-        if (pauseResumeButton == null || videoPlayer == null)
+        if (pauseResumeButton == null || playbackService == null)
         {
             return;
         }
 
         Text buttonLabel = pauseResumeButton.GetComponentInChildren<Text>();
-        if (buttonLabel == null)
+        if (buttonLabel != null)
         {
-            return;
+            buttonLabel.text = playbackService.State == PlaybackState.Playing ? "Pause" : "Resume";
         }
 
-        buttonLabel.text = videoPlayer.GetIsPlaying() ? "Pause" : "Resume";
+        if (progressSlider != null)
+        {
+            progressSlider.interactable = playbackService.HasSource && lastSnapshot.durationSeconds > 0.01f;
+        }
     }
 
     private void UpdateRuntimeStatus()
     {
-        if (statusText == null || currentVideoText == null || videoPlayer == null)
+        if (statusText == null || currentVideoText == null || playbackService == null)
         {
             return;
         }
 
-        string currentUrl = videoPlayer.GetCurrentVideoUrl();
+        string currentUrl = playbackService.CurrentSource;
         if (string.IsNullOrWhiteSpace(currentUrl))
         {
             currentVideoText.text = "No video selected";
         }
-        else
+        else if (!currentVideoText.text.StartsWith("Selected:"))
         {
             currentVideoText.text = "Source: " + Shorten(currentUrl, 90);
         }
@@ -414,38 +501,40 @@ public class VideoBrowserUI : MonoBehaviour
             return;
         }
 
-        if (!videoPlayer.GetHasVideoSource())
+        if (!playbackService.HasSource)
         {
             statusText.text = idleStatusMessage;
             return;
         }
 
-        string lastError = videoPlayer.GetLastErrorMessage();
-        if (!string.IsNullOrWhiteSpace(lastError))
+        if (playbackService.LastError.HasError)
         {
-            statusText.text = "Playback failed: " + lastError;
+            PlaybackError error = playbackService.LastError;
+            statusText.text = "Playback failed [" + error.code + "]: " + error.message;
             return;
         }
 
-        if (videoPlayer.GetIsPreparing())
+        switch (playbackService.State)
         {
-            statusText.text = "Loading video...";
-            return;
+            case PlaybackState.Preparing:
+                statusText.text = "Loading video...";
+                break;
+            case PlaybackState.Playing:
+                statusText.text = lastSnapshot.isBuffering ? "Buffering..." : "Playing";
+                break;
+            case PlaybackState.Paused:
+                statusText.text = "Paused";
+                break;
+            case PlaybackState.Ready:
+                statusText.text = "Ready";
+                break;
+            case PlaybackState.Error:
+                statusText.text = "Playback failed";
+                break;
+            default:
+                statusText.text = idleStatusMessage;
+                break;
         }
-
-        if (videoPlayer.GetIsPlaying())
-        {
-            statusText.text = "Playing";
-            return;
-        }
-
-        if (videoPlayer.GetIsInitialized())
-        {
-            statusText.text = "Paused";
-            return;
-        }
-
-        statusText.text = idleStatusMessage;
     }
 
     private static string BuildButtonText(VideoFile file)
@@ -457,7 +546,6 @@ public class VideoBrowserUI : MonoBehaviour
 
         string name = string.IsNullOrWhiteSpace(file.name) ? "Unnamed video" : file.name;
         string size = FormatSize(file.size);
-
         return name + "\n" + size;
     }
 
@@ -481,6 +569,14 @@ public class VideoBrowserUI : MonoBehaviour
         return value.ToString("F1") + " " + units[unitIndex];
     }
 
+    private static string FormatTime(float seconds)
+    {
+        int totalSeconds = Mathf.Max(0, Mathf.FloorToInt(seconds));
+        int minutes = totalSeconds / 60;
+        int secs = totalSeconds % 60;
+        return string.Format("{0:00}:{1:00}", minutes, secs);
+    }
+
     private static string Shorten(string text, int maxLength)
     {
         if (string.IsNullOrWhiteSpace(text) || text.Length <= maxLength)
@@ -489,6 +585,26 @@ public class VideoBrowserUI : MonoBehaviour
         }
 
         return text.Substring(0, maxLength - 3) + "...";
+    }
+
+    private static GameObject CreateHorizontalRow(Transform parent, string name, Vector2 anchorMin, Vector2 anchorMax)
+    {
+        GameObject row = new GameObject(name);
+        row.transform.SetParent(parent, false);
+
+        RectTransform rect = row.AddComponent<RectTransform>();
+        rect.anchorMin = anchorMin;
+        rect.anchorMax = anchorMax;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+
+        HorizontalLayoutGroup layout = row.AddComponent<HorizontalLayoutGroup>();
+        layout.spacing = 12f;
+        layout.childControlHeight = true;
+        layout.childControlWidth = true;
+        layout.childForceExpandWidth = true;
+
+        return row;
     }
 
     private static Text CreateAnchoredLabel(Transform parent, string name, string content, Font font, int fontSize, TextAnchor alignment, Vector2 anchorMin, Vector2 anchorMax)
@@ -524,15 +640,15 @@ public class VideoBrowserUI : MonoBehaviour
         button.targetGraphic = image;
 
         LayoutElement layoutElement = buttonObject.AddComponent<LayoutElement>();
-        layoutElement.minHeight = 66f;
-        layoutElement.preferredHeight = 66f;
+        layoutElement.minHeight = 62f;
+        layoutElement.preferredHeight = 62f;
 
         GameObject textObject = new GameObject("Label");
         textObject.transform.SetParent(buttonObject.transform, false);
 
         Text text = textObject.AddComponent<Text>();
         text.font = font;
-        text.fontSize = 24;
+        text.fontSize = 23;
         text.alignment = TextAnchor.MiddleCenter;
         text.color = Color.white;
         text.text = label;
@@ -544,6 +660,89 @@ public class VideoBrowserUI : MonoBehaviour
         textRect.offsetMax = Vector2.zero;
 
         return button;
+    }
+
+    private static Slider CreateProgressSlider(Transform parent, string name)
+    {
+        GameObject sliderObject = new GameObject(name);
+        sliderObject.transform.SetParent(parent, false);
+
+        LayoutElement layout = sliderObject.AddComponent<LayoutElement>();
+        layout.minHeight = 52f;
+        layout.preferredHeight = 52f;
+        layout.flexibleWidth = 1f;
+
+        RectTransform sliderRect = sliderObject.AddComponent<RectTransform>();
+
+        GameObject backgroundObject = new GameObject("Background");
+        backgroundObject.transform.SetParent(sliderObject.transform, false);
+        Image background = backgroundObject.AddComponent<Image>();
+        background.color = new Color(0.15f, 0.15f, 0.15f, 1f);
+
+        RectTransform backgroundRect = backgroundObject.GetComponent<RectTransform>();
+        backgroundRect.anchorMin = new Vector2(0f, 0.30f);
+        backgroundRect.anchorMax = new Vector2(1f, 0.70f);
+        backgroundRect.offsetMin = Vector2.zero;
+        backgroundRect.offsetMax = Vector2.zero;
+
+        GameObject fillAreaObject = new GameObject("Fill Area");
+        fillAreaObject.transform.SetParent(sliderObject.transform, false);
+        RectTransform fillAreaRect = fillAreaObject.AddComponent<RectTransform>();
+        fillAreaRect.anchorMin = new Vector2(0f, 0f);
+        fillAreaRect.anchorMax = new Vector2(1f, 1f);
+        fillAreaRect.offsetMin = new Vector2(8f, 8f);
+        fillAreaRect.offsetMax = new Vector2(-8f, -8f);
+
+        GameObject fillObject = new GameObject("Fill");
+        fillObject.transform.SetParent(fillAreaObject.transform, false);
+        Image fillImage = fillObject.AddComponent<Image>();
+        fillImage.color = new Color(0.2f, 0.72f, 0.2f, 1f);
+
+        RectTransform fillRect = fillObject.GetComponent<RectTransform>();
+        fillRect.anchorMin = Vector2.zero;
+        fillRect.anchorMax = Vector2.one;
+        fillRect.offsetMin = Vector2.zero;
+        fillRect.offsetMax = Vector2.zero;
+
+        GameObject handleObject = new GameObject("Handle");
+        handleObject.transform.SetParent(sliderObject.transform, false);
+        Image handleImage = handleObject.AddComponent<Image>();
+        handleImage.color = new Color(0.92f, 0.92f, 0.92f, 1f);
+
+        RectTransform handleRect = handleObject.GetComponent<RectTransform>();
+        handleRect.sizeDelta = new Vector2(18f, 42f);
+
+        Slider slider = sliderObject.AddComponent<Slider>();
+        slider.minValue = 0f;
+        slider.maxValue = 1f;
+        slider.value = 0f;
+        slider.fillRect = fillRect;
+        slider.handleRect = handleRect;
+        slider.targetGraphic = handleImage;
+        slider.direction = Slider.Direction.LeftToRight;
+
+        sliderRect.sizeDelta = new Vector2(0f, 52f);
+        return slider;
+    }
+
+    private static Text CreateFixedLabel(Transform parent, string name, string content, Font font, int fontSize, float preferredWidth)
+    {
+        GameObject labelObject = new GameObject(name);
+        labelObject.transform.SetParent(parent, false);
+
+        LayoutElement layout = labelObject.AddComponent<LayoutElement>();
+        layout.minWidth = preferredWidth;
+        layout.preferredWidth = preferredWidth;
+        layout.flexibleWidth = 0f;
+
+        Text text = labelObject.AddComponent<Text>();
+        text.font = font;
+        text.fontSize = fontSize;
+        text.alignment = TextAnchor.MiddleRight;
+        text.color = Color.white;
+        text.text = content;
+
+        return text;
     }
 
     private static Button CreateListItemButton(Transform parent, string name, string label, Font font)

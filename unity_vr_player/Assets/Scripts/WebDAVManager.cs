@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -9,18 +9,20 @@ using UnityEngine;
 using UnityEngine.Networking;
 
 /// <summary>
-/// WebDAV 管理器。
+/// WebDAV manager.
 /// </summary>
 public class WebDAVManager : MonoBehaviour
 {
     private static WebDAVManager instance;
     public static WebDAVManager Instance => instance;
 
-    [Header("WebDAV配置")]
+    [Header("WebDAV Configuration")]
     [SerializeField] private string serverUrl = "";
     [SerializeField] private string username = "";
     [SerializeField] private string password = "";
     [SerializeField] private string basePath = "/";
+    [SerializeField, Range(10, 60)] private int requestTimeoutSeconds = 20;
+    [SerializeField, Range(0, 3)] private int downloadRetryCount = 1;
 
     private bool isConnected;
     private List<VideoFile> cachedFileList = new List<VideoFile>();
@@ -42,7 +44,7 @@ public class WebDAVManager : MonoBehaviour
 
     public Task<bool> Connect(string url, string user, string pass)
     {
-        serverUrl = (url ?? string.Empty).Trim().TrimEnd('/');
+        serverUrl = NormalizeServerUrl(url);
         username = user ?? string.Empty;
         password = pass ?? string.Empty;
 
@@ -57,6 +59,16 @@ public class WebDAVManager : MonoBehaviour
     public Task<bool> DownloadFile(string remotePath, string localPath, Action<float> onProgress = null)
     {
         return RunAsTask<bool>(onCompleted => DownloadFileCoroutine(remotePath, localPath, onProgress, onCompleted));
+    }
+
+    public List<VideoFile> GetCachedFiles()
+    {
+        return new List<VideoFile>(cachedFileList);
+    }
+
+    public bool GetIsConnected()
+    {
+        return isConnected;
     }
 
     private Task<T> RunAsTask<T>(Func<Action<T>, IEnumerator> coroutineFactory)
@@ -75,40 +87,63 @@ public class WebDAVManager : MonoBehaviour
             yield break;
         }
 
-        using (UnityWebRequest request = UnityWebRequest.Get(serverUrl + "/"))
+        bool connected = false;
+
+        const string depth0Body =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
+            "<d:propfind xmlns:d=\"DAV:\"><d:prop><d:displayname/></d:prop></d:propfind>";
+
+        byte[] body = Encoding.UTF8.GetBytes(depth0Body);
+
+        using (UnityWebRequest request = new UnityWebRequest(serverUrl + "/", "PROPFIND"))
         {
-            request.timeout = 15;
+            request.uploadHandler = new UploadHandlerRaw(body);
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.timeout = requestTimeoutSeconds;
             request.SetRequestHeader("Authorization", BuildAuthHeader());
+            request.SetRequestHeader("Depth", "0");
+            request.SetRequestHeader("Content-Type", "application/xml; charset=utf-8");
 
             yield return request.SendWebRequest();
 
-            if (IsRequestSuccess(request))
+            connected = IsRequestSuccess(request) || request.responseCode == 207;
+        }
+
+        if (!connected)
+        {
+            using (UnityWebRequest fallback = UnityWebRequest.Get(serverUrl + "/"))
             {
-                isConnected = true;
-                Debug.Log("WebDAV 连接成功: " + serverUrl);
-                onCompleted?.Invoke(true);
-            }
-            else
-            {
-                isConnected = false;
-                Debug.LogError("WebDAV 连接失败: " + request.error + " (HTTP " + request.responseCode + ")");
-                onCompleted?.Invoke(false);
+                fallback.timeout = requestTimeoutSeconds;
+                fallback.SetRequestHeader("Authorization", BuildAuthHeader());
+
+                yield return fallback.SendWebRequest();
+                connected = IsRequestSuccess(fallback);
             }
         }
+
+        isConnected = connected;
+
+        if (connected)
+        {
+            Debug.Log("WebDAV connected: " + serverUrl);
+        }
+        else
+        {
+            Debug.LogError("WebDAV connection failed: " + serverUrl);
+        }
+
+        onCompleted?.Invoke(connected);
     }
 
     private IEnumerator ListFilesCoroutine(string path, Action<List<VideoFile>> onCompleted)
     {
         if (!isConnected)
         {
-            Debug.LogWarning("WebDAV 未连接");
             onCompleted?.Invoke(new List<VideoFile>());
             yield break;
         }
 
-        string normalizedPath = string.IsNullOrWhiteSpace(path)
-            ? basePath
-            : path;
+        string normalizedPath = string.IsNullOrWhiteSpace(path) ? basePath : path;
 
         if (!normalizedPath.StartsWith("/"))
         {
@@ -129,7 +164,7 @@ public class WebDAVManager : MonoBehaviour
         {
             request.uploadHandler = new UploadHandlerRaw(body);
             request.downloadHandler = new DownloadHandlerBuffer();
-            request.timeout = 20;
+            request.timeout = requestTimeoutSeconds;
 
             request.SetRequestHeader("Authorization", BuildAuthHeader());
             request.SetRequestHeader("Depth", "1");
@@ -146,7 +181,7 @@ public class WebDAVManager : MonoBehaviour
             }
             else
             {
-                Debug.LogError("获取文件列表失败: " + request.error + " (HTTP " + request.responseCode + ")");
+                Debug.LogError("List files failed: " + request.error + " (HTTP " + request.responseCode + ")");
                 onCompleted?.Invoke(new List<VideoFile>());
             }
         }
@@ -154,50 +189,88 @@ public class WebDAVManager : MonoBehaviour
 
     private IEnumerator DownloadFileCoroutine(string remotePath, string localPath, Action<float> onProgress, Action<bool> onCompleted)
     {
-        if (!isConnected)
-        {
-            onCompleted?.Invoke(false);
-            yield break;
-        }
-
-        if (string.IsNullOrWhiteSpace(remotePath) || string.IsNullOrWhiteSpace(localPath))
+        if (!isConnected || string.IsNullOrWhiteSpace(remotePath) || string.IsNullOrWhiteSpace(localPath))
         {
             onCompleted?.Invoke(false);
             yield break;
         }
 
         string downloadUrl = CombineUrl(serverUrl, remotePath);
-
         string directory = Path.GetDirectoryName(localPath);
         if (!string.IsNullOrWhiteSpace(directory) && !Directory.Exists(directory))
         {
             Directory.CreateDirectory(directory);
         }
 
-        using (UnityWebRequest request = UnityWebRequest.Get(downloadUrl))
+        int maxAttempts = Mathf.Max(1, downloadRetryCount + 1);
+        string tempPath = localPath + ".part";
+
+        bool success = false;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            request.downloadHandler = new DownloadHandlerFile(localPath);
-            request.timeout = 0;
-            request.SetRequestHeader("Authorization", BuildAuthHeader());
-
-            UnityWebRequestAsyncOperation operation = request.SendWebRequest();
-            while (!operation.isDone)
+            if (File.Exists(tempPath))
             {
-                onProgress?.Invoke(Mathf.Clamp01(request.downloadProgress) * 100f);
-                yield return null;
+                File.Delete(tempPath);
             }
 
-            if (IsRequestSuccess(request))
+            using (UnityWebRequest request = UnityWebRequest.Get(downloadUrl))
             {
-                onProgress?.Invoke(100f);
-                Debug.Log("文件下载成功: " + localPath);
-                onCompleted?.Invoke(true);
+                request.downloadHandler = new DownloadHandlerFile(tempPath);
+                request.timeout = 0;
+                request.SetRequestHeader("Authorization", BuildAuthHeader());
+
+                UnityWebRequestAsyncOperation operation = request.SendWebRequest();
+                while (!operation.isDone)
+                {
+                    float baseProgress = (attempt - 1f) / maxAttempts;
+                    float attemptProgress = Mathf.Clamp01(request.downloadProgress) / maxAttempts;
+                    onProgress?.Invoke((baseProgress + attemptProgress) * 100f);
+                    yield return null;
+                }
+
+                if (IsRequestSuccess(request))
+                {
+                    success = true;
+                    break;
+                }
+
+                Debug.LogWarning("Download failed (attempt " + attempt + "/" + maxAttempts + "): " + request.error + " (HTTP " + request.responseCode + ")");
             }
-            else
+
+            if (attempt < maxAttempts)
             {
-                Debug.LogError("文件下载失败: " + request.error + " (HTTP " + request.responseCode + ")");
-                onCompleted?.Invoke(false);
+                yield return new WaitForSecondsRealtime(0.4f);
             }
+        }
+
+        if (!success)
+        {
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+
+            onCompleted?.Invoke(false);
+            yield break;
+        }
+
+        try
+        {
+            if (File.Exists(localPath))
+            {
+                File.Delete(localPath);
+            }
+
+            File.Move(tempPath, localPath);
+            onProgress?.Invoke(100f);
+            Debug.Log("Download succeeded: " + localPath);
+            onCompleted?.Invoke(true);
+        }
+        catch (Exception e)
+        {
+            Debug.LogError("Move downloaded file failed: " + e.Message);
+            onCompleted?.Invoke(false);
         }
     }
 
@@ -224,22 +297,36 @@ public class WebDAVManager : MonoBehaviour
                 return files;
             }
 
+            HashSet<string> seenHrefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             foreach (XmlNode response in responseNodes)
             {
                 string href = response.SelectSingleNode("d:href", ns)?.InnerText ?? string.Empty;
+                href = Uri.UnescapeDataString(href);
+
+                if (string.IsNullOrWhiteSpace(href) || seenHrefs.Contains(href))
+                {
+                    continue;
+                }
+
+                seenHrefs.Add(href);
 
                 XmlNode propNode = response.SelectSingleNode("d:propstat/d:prop", ns);
-                string displayName = propNode?.SelectSingleNode("d:displayname", ns)?.InnerText ?? string.Empty;
+                if (propNode == null)
+                {
+                    continue;
+                }
 
-                bool isCollection = propNode?.SelectSingleNode("d:resourcetype/d:collection", ns) != null;
+                bool isCollection = propNode.SelectSingleNode("d:resourcetype/d:collection", ns) != null;
                 if (isCollection)
                 {
                     continue;
                 }
 
+                string displayName = propNode.SelectSingleNode("d:displayname", ns)?.InnerText ?? string.Empty;
                 if (string.IsNullOrWhiteSpace(displayName))
                 {
-                    displayName = Path.GetFileName(Uri.UnescapeDataString(href));
+                    displayName = Path.GetFileName(href.TrimEnd('/'));
                 }
 
                 string extension = Path.GetExtension(displayName).ToLowerInvariant();
@@ -249,7 +336,7 @@ public class WebDAVManager : MonoBehaviour
                 }
 
                 long size = 0;
-                string sizeText = propNode?.SelectSingleNode("d:getcontentlength", ns)?.InnerText;
+                string sizeText = propNode.SelectSingleNode("d:getcontentlength", ns)?.InnerText;
                 if (!string.IsNullOrWhiteSpace(sizeText))
                 {
                     long.TryParse(sizeText, out size);
@@ -268,7 +355,7 @@ public class WebDAVManager : MonoBehaviour
         }
         catch (Exception e)
         {
-            Debug.LogError("解析 WebDAV 响应失败: " + e.Message);
+            Debug.LogError("Parse WebDAV response failed: " + e.Message);
         }
 
         return files;
@@ -288,6 +375,16 @@ public class WebDAVManager : MonoBehaviour
     {
         string raw = username + ":" + password;
         return "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(raw));
+    }
+
+    private static string NormalizeServerUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return string.Empty;
+        }
+
+        return url.Trim().TrimEnd('/');
     }
 
     private static string CombineUrl(string baseUrl, string path)
@@ -317,15 +414,5 @@ public class WebDAVManager : MonoBehaviour
         }
 
         return normalizedBase + normalizedPath;
-    }
-
-    public List<VideoFile> GetCachedFiles()
-    {
-        return new List<VideoFile>(cachedFileList);
-    }
-
-    public bool GetIsConnected()
-    {
-        return isConnected;
     }
 }

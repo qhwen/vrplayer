@@ -108,10 +108,10 @@
 目标：构建稳定播放状态机，避免 UI 和底层播放器直接耦合。
 
 任务清单：
-- [ ] 封装 `IPlaybackService`（Open/Play/Pause/Stop/Seek/Volume）。
-- [ ] 建立播放状态机（Idle/Preparing/Ready/Playing/Paused/Error）。
-- [ ] 实现事件回调（进度、时长、错误、缓冲）。
-- [ ] 统一异常转换（文件不存在、格式不支持、解码失败）。
+- [x] 封装 `IPlaybackService`（Open/Play/Pause/Stop/Seek/Volume）。
+- [x] 建立播放状态机（Idle/Preparing/Ready/Playing/Paused/Error）。
+- [x] 实现事件回调（进度、时长、错误、缓冲）。
+- [x] 统一异常转换（文件不存在、格式不支持、解码失败）。
 
 交付物：
 - 播放服务实现与状态模型。
@@ -130,10 +130,10 @@
 目标：完成可用的 360 播放体验。
 
 任务清单：
-- [ ] Sphere + 材质 + RenderTexture 映射链路。
-- [ ] 视角控制（优先触控拖拽，陀螺仪为增强项）。
-- [ ] 旋转范围限制与平滑插值。
-- [ ] 场景初始化与资源释放（防止内存泄漏）。
+- [x] Sphere + 材质 + RenderTexture 映射链路。
+- [x] 视角控制（优先触控拖拽，陀螺仪为增强项）。
+- [x] 旋转范围限制与平滑插值。
+- [x] 场景初始化与资源释放（防止内存泄漏）。
 
 交付物：
 - 可在 Android 设备中查看 360 内容的场景。
@@ -151,8 +151,8 @@
 目标：提供可用的播放器界面和用户反馈。
 
 任务清单：
-- [ ] 播放控制 UI（播放/暂停、进度条、时长、返回）。
-- [ ] 状态提示 UI（加载中、错误、下载进度）。
+- [x] 播放控制 UI（播放/暂停、进度条、时长、返回）。
+- [x] 状态提示 UI（加载中、错误、下载进度）。
 - [ ] UI 仅依赖应用层接口，不直连协议实现。
 - [ ] 建立最小导航（播放器页 / 文件页 / 设置页）。
 
@@ -171,10 +171,10 @@
 目标：本地文件与缓存能力可独立复用。
 
 任务清单：
-- [ ] 实现 `LocalVideoSource`（扫描、读取、过滤视频格式）。
-- [ ] 实现 `CacheService`（路径管理、容量统计、清理策略）。
-- [ ] 统一路径规范（Android 使用 `persistentDataPath`）。
-- [ ] 建立缓存命名规则（hash 或安全文件名映射）。
+- [x] 实现 `LocalVideoSource`（扫描、读取、过滤视频格式）。
+- [x] 实现 `CacheService`（路径管理、容量统计、清理策略）。
+- [x] 统一路径规范（Android 使用 `persistentDataPath`）。
+- [x] 建立缓存命名规则（hash 或安全文件名映射）。
 
 交付物：
 - 本地数据源与缓存服务实现。
@@ -192,10 +192,10 @@
 目标：实现与具体 WebDAV 服务解耦的远端数据能力。
 
 任务清单：
-- [ ] 实现 `WebDavVideoSource`，对齐 `IVideoSource`。
-- [ ] PROPFIND XML 解析改为标准 XML 解析器（非字符串拼切）。
-- [ ] Basic Auth 与连接测试。
-- [ ] 下载进度回调与失败重试（MVP 一次重试即可）。
+- [x] 实现 `WebDavVideoSource`，对齐 `IVideoSource`。
+- [x] PROPFIND XML 解析改为标准 XML 解析器（非字符串拼切）。
+- [x] Basic Auth 与连接测试。
+- [x] 下载进度回调与失败重试（MVP 一次重试即可）。
 - [ ] Nextcloud/ownCloud 兼容测试。
 
 交付物：
@@ -214,9 +214,9 @@
 目标：补齐 Android 侧能力与权限模型。
 
 任务清单：
-- [ ] Manifest 权限最小化配置（按 Android 版本分支处理）。
-- [ ] 文件选择方案：先固定目录，后接 SAF 插件。
-- [ ] 横屏/沉浸模式设置。
+- [x] Manifest 权限最小化配置（按 Android 版本分支处理）。
+- [x] 文件选择方案：先固定目录，后接 SAF 插件。
+- [x] 横屏/沉浸模式设置。
 - [ ] Release 签名配置与版本号策略（versionCode/versionName）。
 
 交付物：
@@ -320,3 +320,4 @@
 *计划版本：2.0（任务拆分版）*  
 *更新日期：2026-02-08*  
 *适用范围：Android MVP（本机不安装 Unity）*
+

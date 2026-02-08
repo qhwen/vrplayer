@@ -1,109 +1,45 @@
-using System.Collections;
-using System.IO;
 using UnityEngine;
 using UnityEngine.EventSystems;
-using UnityEngine.UI;
 using UnityEngine.Video;
 
 /// <summary>
-/// VR video player controller.
+/// VR rendering and interaction layer. Playback is delegated to IPlaybackService.
 /// </summary>
 public class VRVideoPlayer : MonoBehaviour
 {
     [Header("Video Settings")]
     [SerializeField] private string defaultVideoPath = "";
     [SerializeField] private GameObject skySpherePrefab;
+    [SerializeField, Range(512, 4096)] private int renderTextureWidth = 1920;
+    [SerializeField, Range(512, 4096)] private int renderTextureHeight = 1080;
+
+    [Header("Input Settings")]
     [SerializeField] private bool enableHeadTracking = true;
     [SerializeField] private float rotationSensitivity = 0.5f;
     [SerializeField, Range(0.01f, 1f)] private float smoothingFactor = 0.1f;
-    [SerializeField, Range(5f, 60f)] private float prepareTimeoutSeconds = 20f;
-
-    [Header("Input Settings")]
     [SerializeField] private bool enablePointerDrag = true;
     [SerializeField] private float pointerDeltaScale = 1f;
 
-    private VideoPlayer videoPlayer;
+    private IPlaybackService playbackService;
+
     private RenderTexture renderTexture;
     private Material videoMaterial;
 
-    private bool isPlaying;
-    private bool isInitialized;
-    private bool hasVideoSource;
-    private bool isPreparing;
-    private float prepareStartTime;
-
-    private string lastErrorMessage = string.Empty;
+    private GameObject skySphere;
+    private Transform skySphereTransform;
 
     private float currentYaw;
     private float currentPitch;
     private float targetYaw;
     private float targetPitch;
 
-    private GameObject skySphere;
-    private Transform skySphereTransform;
-
-    private Canvas uiCanvas;
-    private Text playbackStatusText;
-    private Text timeText;
-
     private Vector2 lastPointerPosition;
     private bool isPointerDragging;
 
     private void Awake()
     {
-        videoPlayer = gameObject.AddComponent<VideoPlayer>();
-        videoPlayer.playOnAwake = false;
-        videoPlayer.isLooping = false;
-        videoPlayer.source = VideoSource.Url;
-        videoPlayer.renderMode = VideoRenderMode.APIOnly;
-        videoPlayer.audioOutputMode = VideoAudioOutputMode.Direct;
-        videoPlayer.EnableAudioTrack(0, true);
-        videoPlayer.errorReceived += OnVideoError;
-        videoPlayer.prepareCompleted += OnPrepareCompleted;
-
-        if (!string.IsNullOrWhiteSpace(defaultVideoPath))
-        {
-            videoPlayer.url = NormalizeVideoPath(defaultVideoPath);
-            hasVideoSource = true;
-        }
-
-        if (skySpherePrefab != null)
-        {
-            skySphere = Instantiate(skySpherePrefab, Vector3.zero, Quaternion.identity);
-        }
-        else
-        {
-            CreateDefaultSkySphere();
-        }
-
-        if (skySphere == null)
-        {
-            Debug.LogError("Sky sphere creation failed. Player is disabled.");
-            enabled = false;
-            return;
-        }
-
-        skySphereTransform = skySphere.transform;
-        skySphereTransform.localScale = new Vector3(-1f, 1f, 1f) * 50f;
-
-        renderTexture = new RenderTexture(1920, 1080, 24, RenderTextureFormat.ARGB32);
-
-        Shader shader = Shader.Find("Unlit/Texture");
-        if (shader == null)
-        {
-            shader = Shader.Find("Standard");
-        }
-
-        videoMaterial = new Material(shader);
-        videoMaterial.mainTexture = renderTexture;
-
-        Renderer sphereRenderer = skySphere.GetComponent<Renderer>();
-        if (sphereRenderer != null)
-        {
-            sphereRenderer.material = videoMaterial;
-        }
-
-        CreateUI();
+        EnsurePlaybackService();
+        InitializeRenderPipeline();
     }
 
     private void Start()
@@ -116,10 +52,7 @@ public class VRVideoPlayer : MonoBehaviour
 
     private void Update()
     {
-        if (videoPlayer != null && videoPlayer.isPlaying && videoPlayer.texture != null && renderTexture != null)
-        {
-            Graphics.Blit(videoPlayer.texture, renderTexture);
-        }
+        UpdateVideoTexture();
 
         if (enablePointerDrag)
         {
@@ -131,104 +64,45 @@ public class VRVideoPlayer : MonoBehaviour
             SmoothHeadTracking();
         }
 
-        CheckPrepareTimeout();
         ApplyVRRotation();
-        UpdateUI();
     }
 
     public void PlayVideo(string path)
     {
-        if (string.IsNullOrWhiteSpace(path) || videoPlayer == null)
+        if (playbackService == null || string.IsNullOrWhiteSpace(path))
         {
             return;
         }
 
-        if (videoPlayer.isPlaying)
+        if (playbackService.Open(path))
         {
-            videoPlayer.Stop();
+            playbackService.Play();
         }
-
-        string finalPath = NormalizeVideoPath(path);
-
-        hasVideoSource = true;
-        isPlaying = false;
-        isInitialized = false;
-        isPreparing = true;
-        lastErrorMessage = string.Empty;
-        prepareStartTime = Time.unscaledTime;
-
-        videoPlayer.url = finalPath;
-        videoPlayer.Prepare();
-
-        Debug.Log("Prepare video: " + finalPath);
     }
 
     public void PauseVideo()
     {
-        if (videoPlayer == null)
-        {
-            return;
-        }
-
-        videoPlayer.Pause();
-        isPlaying = false;
+        playbackService?.Pause();
     }
 
     public void ResumeVideo()
     {
-        if (videoPlayer == null)
-        {
-            return;
-        }
-
-        if (!isInitialized)
-        {
-            if (hasVideoSource && !string.IsNullOrWhiteSpace(videoPlayer.url) && !isPreparing)
-            {
-                isPreparing = true;
-                lastErrorMessage = string.Empty;
-                prepareStartTime = Time.unscaledTime;
-                videoPlayer.Prepare();
-            }
-
-            return;
-        }
-
-        videoPlayer.Play();
-        isPlaying = true;
+        playbackService?.Play();
     }
 
     public void StopVideo()
     {
-        if (videoPlayer == null)
-        {
-            return;
-        }
-
-        videoPlayer.Stop();
-        isPlaying = false;
-        isInitialized = false;
-        isPreparing = false;
+        playbackService?.Stop();
     }
 
     public void SetVolume(float volume)
     {
-        if (videoPlayer == null)
-        {
-            return;
-        }
-
-        videoPlayer.SetDirectAudioVolume(0, Mathf.Clamp01(volume));
+        playbackService?.SetVolume(volume);
     }
 
     public void SeekTo(float seconds)
     {
-        if (videoPlayer == null || !videoPlayer.canSetTime)
-        {
-            return;
-        }
-
-        videoPlayer.time = Mathf.Max(0f, seconds);
+        playbackService?.Seek(seconds);
     }
 
     public void SetVRRotation(float yaw, float pitch)
@@ -237,62 +111,135 @@ public class VRVideoPlayer : MonoBehaviour
         targetPitch = Mathf.Clamp(pitch, -90f, 90f);
     }
 
-    private string NormalizeVideoPath(string rawPath)
+    public void OnDrag(float deltaX, float deltaY)
     {
-        string path = rawPath.Trim();
-
-        if (path.StartsWith("http://", System.StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("https://", System.StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("file://", System.StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("content://", System.StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("jar:file://", System.StringComparison.OrdinalIgnoreCase))
-        {
-            return path;
-        }
-
-        string normalized = path.Replace("\\", "/");
-
-        if (normalized.StartsWith("/"))
-        {
-            return "file://" + normalized;
-        }
-
-        if (Path.IsPathRooted(path))
-        {
-            if (normalized.Length > 1 && normalized[1] == ':')
-            {
-                normalized = "/" + normalized;
-            }
-
-            return "file://" + normalized;
-        }
-
-        return path;
+        targetYaw += deltaX * rotationSensitivity;
+        targetPitch = Mathf.Clamp(targetPitch - deltaY * rotationSensitivity, -90f, 90f);
     }
 
-    private void CheckPrepareTimeout()
+    public IPlaybackService GetPlaybackService()
     {
-        if (!isPreparing || isInitialized)
+        return playbackService;
+    }
+
+    public VideoPlayer GetVideoPlayer()
+    {
+        return playbackService != null ? playbackService.GetNativePlayer() : null;
+    }
+
+    public bool GetIsPlaying()
+    {
+        return playbackService != null && playbackService.State == PlaybackState.Playing;
+    }
+
+    public bool GetIsInitialized()
+    {
+        if (playbackService == null)
+        {
+            return false;
+        }
+
+        PlaybackState state = playbackService.State;
+        return state == PlaybackState.Ready || state == PlaybackState.Playing || state == PlaybackState.Paused;
+    }
+
+    public bool GetIsPreparing()
+    {
+        return playbackService != null && playbackService.State == PlaybackState.Preparing;
+    }
+
+    public bool GetHasVideoSource()
+    {
+        return playbackService != null && playbackService.HasSource;
+    }
+
+    public string GetLastErrorMessage()
+    {
+        if (playbackService == null)
+        {
+            return string.Empty;
+        }
+
+        return playbackService.LastError.message;
+    }
+
+    public string GetCurrentVideoUrl()
+    {
+        if (playbackService == null)
+        {
+            return string.Empty;
+        }
+
+        return playbackService.CurrentSource;
+    }
+
+    private void EnsurePlaybackService()
+    {
+        UnityVideoPlaybackService nativeService = GetComponent<UnityVideoPlaybackService>();
+        if (nativeService == null)
+        {
+            nativeService = gameObject.AddComponent<UnityVideoPlaybackService>();
+        }
+
+        playbackService = nativeService;
+    }
+
+    private void InitializeRenderPipeline()
+    {
+        if (skySpherePrefab != null)
+        {
+            skySphere = Instantiate(skySpherePrefab, Vector3.zero, Quaternion.identity);
+        }
+        else
+        {
+            skySphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            skySphere.name = "SkySphere";
+        }
+
+        if (skySphere == null)
+        {
+            Debug.LogError("Sky sphere creation failed. Player is disabled.");
+            enabled = false;
+            return;
+        }
+
+        skySphereTransform = skySphere.transform;
+        skySphereTransform.localScale = new Vector3(-1f, 1f, 1f) * 50f;
+
+        renderTexture = new RenderTexture(renderTextureWidth, renderTextureHeight, 24, RenderTextureFormat.ARGB32);
+
+        Shader shader = Shader.Find("Unlit/Texture");
+        if (shader == null)
+        {
+            shader = Shader.Find("Standard");
+        }
+
+        videoMaterial = new Material(shader)
+        {
+            mainTexture = renderTexture
+        };
+
+        Renderer sphereRenderer = skySphere.GetComponent<Renderer>();
+        if (sphereRenderer != null)
+        {
+            sphereRenderer.material = videoMaterial;
+        }
+    }
+
+    private void UpdateVideoTexture()
+    {
+        if (playbackService == null || renderTexture == null)
         {
             return;
         }
 
-        if (Time.unscaledTime - prepareStartTime < prepareTimeoutSeconds)
+        Texture sourceTexture = playbackService.CurrentTexture;
+        if (sourceTexture == null)
         {
             return;
         }
 
-        isPreparing = false;
-        isInitialized = false;
-        isPlaying = false;
-        lastErrorMessage = "Video loading timeout";
-
-        if (videoPlayer != null)
-        {
-            videoPlayer.Stop();
-        }
-
-        Debug.LogError("Video prepare timeout: " + (videoPlayer != null ? videoPlayer.url : "<null>"));
+        Graphics.Blit(sourceTexture, renderTexture);
     }
 
     private void HandlePointerDrag()
@@ -327,7 +274,6 @@ public class VRVideoPlayer : MonoBehaviour
 
             Vector2 delta = touch.position - lastPointerPosition;
             lastPointerPosition = touch.position;
-
             OnDrag(delta.x * pointerDeltaScale, delta.y * pointerDeltaScale);
             return;
         }
@@ -356,7 +302,6 @@ public class VRVideoPlayer : MonoBehaviour
             Vector2 mousePosition = Input.mousePosition;
             Vector2 delta = mousePosition - lastPointerPosition;
             lastPointerPosition = mousePosition;
-
             OnDrag(delta.x * pointerDeltaScale, delta.y * pointerDeltaScale);
         }
     }
@@ -389,159 +334,11 @@ public class VRVideoPlayer : MonoBehaviour
             return;
         }
 
-        skySphereTransform.rotation = Quaternion.Euler(
-            currentPitch,
-            -currentYaw,
-            0f
-        );
-    }
-
-    public void OnDrag(float deltaX, float deltaY)
-    {
-        targetYaw += deltaX * rotationSensitivity;
-        targetPitch = Mathf.Clamp(targetPitch - deltaY * rotationSensitivity, -90f, 90f);
-    }
-
-    private void CreateDefaultSkySphere()
-    {
-        skySphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        skySphere.name = "SkySphere";
-    }
-
-    private void CreateUI()
-    {
-        GameObject canvasObject = new GameObject("UICanvas");
-        uiCanvas = canvasObject.AddComponent<Canvas>();
-        uiCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
-
-        CanvasScaler scaler = canvasObject.AddComponent<CanvasScaler>();
-        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-        scaler.referenceResolution = new Vector2(1920f, 1080f);
-        scaler.matchWidthOrHeight = 0.6f;
-
-        canvasObject.AddComponent<GraphicRaycaster>();
-
-        Font font = Resources.GetBuiltinResource<Font>("Arial.ttf");
-
-        playbackStatusText = CreateText("StatusText", "Select a local video to start", new Vector2(0f, 476f), 34, font);
-        timeText = CreateText("TimeText", "00:00 / 00:00", new Vector2(0f, 430f), 28, font);
-    }
-
-    private Text CreateText(string name, string content, Vector2 anchoredPosition, int fontSize, Font font)
-    {
-        GameObject textObject = new GameObject(name);
-        textObject.transform.SetParent(uiCanvas.transform, false);
-
-        Text text = textObject.AddComponent<Text>();
-        text.font = font;
-        text.fontSize = fontSize;
-        text.alignment = TextAnchor.MiddleCenter;
-        text.color = Color.white;
-        text.text = content;
-
-        RectTransform rect = text.GetComponent<RectTransform>();
-        rect.anchorMin = new Vector2(0.5f, 1f);
-        rect.anchorMax = new Vector2(0.5f, 1f);
-        rect.pivot = new Vector2(0.5f, 1f);
-        rect.sizeDelta = new Vector2(1500f, 44f);
-        rect.anchoredPosition = anchoredPosition;
-
-        return text;
-    }
-
-    private void UpdateUI()
-    {
-        if (playbackStatusText == null || timeText == null || videoPlayer == null)
-        {
-            return;
-        }
-
-        if (!hasVideoSource)
-        {
-            playbackStatusText.text = "Select a local video from the list";
-            playbackStatusText.color = Color.white;
-            timeText.text = "00:00 / 00:00";
-            return;
-        }
-
-        if (!string.IsNullOrWhiteSpace(lastErrorMessage))
-        {
-            playbackStatusText.text = "Cannot play this file: " + lastErrorMessage;
-            playbackStatusText.color = new Color(1f, 0.4f, 0.4f, 1f);
-            return;
-        }
-
-        if (isPreparing)
-        {
-            playbackStatusText.text = "Loading video...";
-            playbackStatusText.color = Color.cyan;
-            return;
-        }
-
-        if (isPlaying)
-        {
-            playbackStatusText.text = "Playing";
-            playbackStatusText.color = Color.green;
-        }
-        else
-        {
-            playbackStatusText.text = "Paused";
-            playbackStatusText.color = Color.yellow;
-        }
-
-        float currentTime = (float)videoPlayer.time;
-        double durationRaw = videoPlayer.length;
-        float duration = durationRaw > 0 ? (float)durationRaw : 0f;
-
-        timeText.text = string.Format(
-            "{0} / {1}",
-            FormatTime(currentTime),
-            FormatTime(duration)
-        );
-    }
-
-    private static string FormatTime(float seconds)
-    {
-        int totalSeconds = Mathf.Max(0, Mathf.FloorToInt(seconds));
-        int minutes = totalSeconds / 60;
-        int secs = totalSeconds % 60;
-        return string.Format("{0:00}:{1:00}", minutes, secs);
-    }
-
-    private void OnPrepareCompleted(VideoPlayer source)
-    {
-        if (source == null)
-        {
-            return;
-        }
-
-        isPreparing = false;
-        isPlaying = true;
-        isInitialized = true;
-        lastErrorMessage = string.Empty;
-
-        source.Play();
-        Debug.Log("Video started: " + source.url);
-    }
-
-    private void OnVideoError(VideoPlayer source, string message)
-    {
-        isPreparing = false;
-        isPlaying = false;
-        isInitialized = false;
-        lastErrorMessage = string.IsNullOrWhiteSpace(message) ? "Unknown error" : message;
-
-        Debug.LogError("Video playback error: " + lastErrorMessage);
+        skySphereTransform.rotation = Quaternion.Euler(currentPitch, -currentYaw, 0f);
     }
 
     private void OnDestroy()
     {
-        if (videoPlayer != null)
-        {
-            videoPlayer.prepareCompleted -= OnPrepareCompleted;
-            videoPlayer.errorReceived -= OnVideoError;
-        }
-
         if (renderTexture != null)
         {
             renderTexture.Release();
@@ -553,54 +350,9 @@ public class VRVideoPlayer : MonoBehaviour
             Destroy(videoMaterial);
         }
 
-        if (skySphere != null && skySphere != skySpherePrefab)
+        if (skySphere != null)
         {
             Destroy(skySphere);
         }
-
-        if (uiCanvas != null)
-        {
-            Destroy(uiCanvas.gameObject);
-        }
-    }
-
-    public VideoPlayer GetVideoPlayer()
-    {
-        return videoPlayer;
-    }
-
-    public bool GetIsPlaying()
-    {
-        return isPlaying;
-    }
-
-    public bool GetIsInitialized()
-    {
-        return isInitialized;
-    }
-
-    public bool GetIsPreparing()
-    {
-        return isPreparing;
-    }
-
-    public bool GetHasVideoSource()
-    {
-        return hasVideoSource;
-    }
-
-    public string GetLastErrorMessage()
-    {
-        return lastErrorMessage;
-    }
-
-    public string GetCurrentVideoUrl()
-    {
-        if (videoPlayer == null)
-        {
-            return string.Empty;
-        }
-
-        return videoPlayer.url;
     }
 }
