@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -20,6 +21,8 @@ public class VideoBrowserUI : MonoBehaviour
     private Text hintText;
 
     private Button refreshButton;
+    private Button grantPermissionButton;
+    private Button openSettingsButton;
     private Button pauseResumeButton;
     private Button stopButton;
 
@@ -55,7 +58,31 @@ public class VideoBrowserUI : MonoBehaviour
         }
 
         BuildPanel();
+        StartCoroutine(InitializeAndRefresh());
+    }
+
+    private IEnumerator InitializeAndRefresh()
+    {
+        yield return null;
+
+        if (localFileManager != null && !localFileManager.HasReadableMediaPermission())
+        {
+            localFileManager.RequestReadableMediaPermission();
+            yield return WaitForPermissionRequest(4f);
+        }
+
         RefreshVideoList();
+    }
+
+    private IEnumerator WaitForPermissionRequest(float timeoutSeconds)
+    {
+        float left = timeoutSeconds;
+
+        while (localFileManager != null && localFileManager.IsPermissionRequestInFlight() && left > 0f)
+        {
+            left -= Time.unscaledDeltaTime;
+            yield return null;
+        }
     }
 
     private void Update()
@@ -78,7 +105,7 @@ public class VideoBrowserUI : MonoBehaviour
 
         RectTransform panelRect = panelObject.AddComponent<RectTransform>();
         panelRect.anchorMin = new Vector2(0.03f, 0.02f);
-        panelRect.anchorMax = new Vector2(0.97f, 0.48f);
+        panelRect.anchorMax = new Vector2(0.97f, 0.52f);
         panelRect.offsetMin = Vector2.zero;
         panelRect.offsetMax = Vector2.zero;
 
@@ -86,47 +113,67 @@ public class VideoBrowserUI : MonoBehaviour
         panelBackground.color = new Color(0f, 0f, 0f, 0.72f);
 
         CreateAnchoredLabel(panelObject.transform, "Title", "Local Video Library", font, 38, TextAnchor.UpperCenter,
-            new Vector2(0.02f, 0.87f), new Vector2(0.98f, 1f));
+            new Vector2(0.02f, 0.88f), new Vector2(0.98f, 1f));
 
         statusText = CreateAnchoredLabel(panelObject.transform, "Status", "Loading videos...", font, 28, TextAnchor.UpperCenter,
-            new Vector2(0.02f, 0.76f), new Vector2(0.98f, 0.87f));
+            new Vector2(0.02f, 0.78f), new Vector2(0.98f, 0.88f));
 
         currentVideoText = CreateAnchoredLabel(panelObject.transform, "CurrentVideo", "No video selected", font, 24, TextAnchor.MiddleLeft,
-            new Vector2(0.02f, 0.68f), new Vector2(0.98f, 0.76f));
+            new Vector2(0.02f, 0.70f), new Vector2(0.98f, 0.78f));
 
-        GameObject buttonRow = new GameObject("ButtonRow");
-        buttonRow.transform.SetParent(panelObject.transform, false);
+        GameObject controlRow = new GameObject("ControlRow");
+        controlRow.transform.SetParent(panelObject.transform, false);
 
-        RectTransform rowRect = buttonRow.AddComponent<RectTransform>();
-        rowRect.anchorMin = new Vector2(0.02f, 0.56f);
-        rowRect.anchorMax = new Vector2(0.98f, 0.66f);
-        rowRect.offsetMin = Vector2.zero;
-        rowRect.offsetMax = Vector2.zero;
+        RectTransform controlRowRect = controlRow.AddComponent<RectTransform>();
+        controlRowRect.anchorMin = new Vector2(0.02f, 0.60f);
+        controlRowRect.anchorMax = new Vector2(0.98f, 0.68f);
+        controlRowRect.offsetMin = Vector2.zero;
+        controlRowRect.offsetMax = Vector2.zero;
 
-        HorizontalLayoutGroup horizontalLayout = buttonRow.AddComponent<HorizontalLayoutGroup>();
-        horizontalLayout.spacing = 14f;
-        horizontalLayout.padding = new RectOffset(0, 0, 0, 0);
-        horizontalLayout.childControlHeight = true;
-        horizontalLayout.childControlWidth = true;
-        horizontalLayout.childForceExpandWidth = true;
+        HorizontalLayoutGroup controlLayout = controlRow.AddComponent<HorizontalLayoutGroup>();
+        controlLayout.spacing = 14f;
+        controlLayout.childControlHeight = true;
+        controlLayout.childControlWidth = true;
+        controlLayout.childForceExpandWidth = true;
 
-        refreshButton = CreateActionButton(buttonRow.transform, "RefreshButton", "Refresh", font);
-        pauseResumeButton = CreateActionButton(buttonRow.transform, "PauseResumeButton", "Pause", font);
-        stopButton = CreateActionButton(buttonRow.transform, "StopButton", "Stop", font);
+        refreshButton = CreateActionButton(controlRow.transform, "RefreshButton", "Refresh", font);
+        pauseResumeButton = CreateActionButton(controlRow.transform, "PauseResumeButton", "Pause", font);
+        stopButton = CreateActionButton(controlRow.transform, "StopButton", "Stop", font);
 
         refreshButton.onClick.AddListener(RefreshVideoList);
         pauseResumeButton.onClick.AddListener(OnPauseResumeClicked);
         stopButton.onClick.AddListener(OnStopClicked);
 
+        GameObject permissionRow = new GameObject("PermissionRow");
+        permissionRow.transform.SetParent(panelObject.transform, false);
+
+        RectTransform permissionRowRect = permissionRow.AddComponent<RectTransform>();
+        permissionRowRect.anchorMin = new Vector2(0.02f, 0.52f);
+        permissionRowRect.anchorMax = new Vector2(0.98f, 0.60f);
+        permissionRowRect.offsetMin = Vector2.zero;
+        permissionRowRect.offsetMax = Vector2.zero;
+
+        HorizontalLayoutGroup permissionLayout = permissionRow.AddComponent<HorizontalLayoutGroup>();
+        permissionLayout.spacing = 14f;
+        permissionLayout.childControlHeight = true;
+        permissionLayout.childControlWidth = true;
+        permissionLayout.childForceExpandWidth = true;
+
+        grantPermissionButton = CreateActionButton(permissionRow.transform, "GrantPermissionButton", "Grant Permission", font);
+        openSettingsButton = CreateActionButton(permissionRow.transform, "OpenSettingsButton", "Open Settings", font);
+
+        grantPermissionButton.onClick.AddListener(OnGrantPermissionClicked);
+        openSettingsButton.onClick.AddListener(OnOpenSettingsClicked);
+
         hintText = CreateAnchoredLabel(panelObject.transform, "Hint", "", font, 20, TextAnchor.UpperLeft,
-            new Vector2(0.02f, 0.49f), new Vector2(0.98f, 0.56f));
+            new Vector2(0.02f, 0.45f), new Vector2(0.98f, 0.52f));
 
         GameObject scrollObject = new GameObject("VideoScroll");
         scrollObject.transform.SetParent(panelObject.transform, false);
 
         RectTransform scrollRect = scrollObject.AddComponent<RectTransform>();
         scrollRect.anchorMin = new Vector2(0.02f, 0.04f);
-        scrollRect.anchorMax = new Vector2(0.98f, 0.48f);
+        scrollRect.anchorMax = new Vector2(0.98f, 0.45f);
         scrollRect.offsetMin = Vector2.zero;
         scrollRect.offsetMax = Vector2.zero;
 
@@ -186,12 +233,15 @@ public class VideoBrowserUI : MonoBehaviour
         List<VideoFile> videos = localFileManager.GetLocalVideos();
         RebuildVideoList(videos);
 
+        bool hasPermission = localFileManager.HasReadableMediaPermission();
+        SetPermissionButtonsVisible(!hasPermission);
+
         if (videos.Count == 0)
         {
-            if (!localFileManager.HasReadableMediaPermission())
+            if (!hasPermission)
             {
                 idleStatusMessage = "Storage permission required";
-                hintText.text = "Allow media permission (Photos and videos), then tap Refresh again. If no popup appears, reinstall this build once and retry.";
+                hintText.text = "Tap Grant Permission. If no popup appears, tap Open Settings and allow Photos and videos.";
             }
             else
             {
@@ -204,6 +254,19 @@ public class VideoBrowserUI : MonoBehaviour
 
         idleStatusMessage = "Found " + videos.Count + " videos. Tap one to play.";
         hintText.text = "Touch and drag outside the panel to rotate the VR view.";
+    }
+
+    private void SetPermissionButtonsVisible(bool visible)
+    {
+        if (grantPermissionButton != null)
+        {
+            grantPermissionButton.gameObject.SetActive(visible);
+        }
+
+        if (openSettingsButton != null)
+        {
+            openSettingsButton.gameObject.SetActive(visible);
+        }
     }
 
     private void RebuildVideoList(List<VideoFile> videos)
@@ -257,6 +320,33 @@ public class VideoBrowserUI : MonoBehaviour
         videoPlayer.PlayVideo(path);
     }
 
+    private void OnGrantPermissionClicked()
+    {
+        StartCoroutine(RequestPermissionAndRefresh());
+    }
+
+    private IEnumerator RequestPermissionAndRefresh()
+    {
+        if (localFileManager == null)
+        {
+            yield break;
+        }
+
+        localFileManager.RequestReadableMediaPermission();
+        yield return WaitForPermissionRequest(6f);
+        RefreshVideoList();
+    }
+
+    private void OnOpenSettingsClicked()
+    {
+        if (localFileManager == null)
+        {
+            return;
+        }
+
+        localFileManager.OpenAppPermissionSettings();
+    }
+
     private void OnPauseResumeClicked()
     {
         if (videoPlayer == null)
@@ -298,14 +388,7 @@ public class VideoBrowserUI : MonoBehaviour
             return;
         }
 
-        if (videoPlayer.GetIsPlaying())
-        {
-            buttonLabel.text = "Pause";
-        }
-        else
-        {
-            buttonLabel.text = "Resume";
-        }
+        buttonLabel.text = videoPlayer.GetIsPlaying() ? "Pause" : "Resume";
     }
 
     private void UpdateRuntimeStatus()
@@ -323,6 +406,12 @@ public class VideoBrowserUI : MonoBehaviour
         else
         {
             currentVideoText.text = "Source: " + Shorten(currentUrl, 90);
+        }
+
+        if (localFileManager != null && localFileManager.IsPermissionRequestInFlight())
+        {
+            statusText.text = "Requesting permission...";
+            return;
         }
 
         if (!videoPlayer.GetHasVideoSource())
@@ -435,15 +524,15 @@ public class VideoBrowserUI : MonoBehaviour
         button.targetGraphic = image;
 
         LayoutElement layoutElement = buttonObject.AddComponent<LayoutElement>();
-        layoutElement.minHeight = 68f;
-        layoutElement.preferredHeight = 68f;
+        layoutElement.minHeight = 66f;
+        layoutElement.preferredHeight = 66f;
 
         GameObject textObject = new GameObject("Label");
         textObject.transform.SetParent(buttonObject.transform, false);
 
         Text text = textObject.AddComponent<Text>();
         text.font = font;
-        text.fontSize = 28;
+        text.fontSize = 24;
         text.alignment = TextAnchor.MiddleCenter;
         text.color = Color.white;
         text.text = label;
@@ -491,5 +580,3 @@ public class VideoBrowserUI : MonoBehaviour
         return button;
     }
 }
-
-

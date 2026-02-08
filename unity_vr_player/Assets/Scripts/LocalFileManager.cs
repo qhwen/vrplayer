@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
@@ -27,6 +28,8 @@ public class LocalFileManager : MonoBehaviour
 
     private string cacheDirectory = string.Empty;
 
+    private bool permissionRequestInFlight;
+
     private void Awake()
     {
         if (instance == null)
@@ -34,7 +37,6 @@ public class LocalFileManager : MonoBehaviour
             instance = this;
             DontDestroyOnLoad(gameObject);
             InitializeCacheDirectory();
-            EnsureAndroidReadPermission();
             return;
         }
 
@@ -56,40 +58,128 @@ public class LocalFileManager : MonoBehaviour
         Debug.Log("Cache directory: " + cacheDirectory);
     }
 
-    private bool EnsureAndroidReadPermission()
+    public bool IsPermissionRequestInFlight()
+    {
+        return permissionRequestInFlight;
+    }
+
+    public bool HasReadableMediaPermission()
     {
 #if UNITY_ANDROID && !UNITY_EDITOR
-        const string readMediaVideo = "android.permission.READ_MEDIA_VIDEO";
-        const string readSelectedVisualMedia = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED";
-
-        bool hasLegacy = Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead);
-        bool hasMediaVideo = Permission.HasUserAuthorizedPermission(readMediaVideo);
-        bool hasSelectedMedia = Permission.HasUserAuthorizedPermission(readSelectedVisualMedia);
-
-        if (!hasLegacy)
-        {
-            Permission.RequestUserPermission(Permission.ExternalStorageRead);
-        }
-
-        if (!hasMediaVideo)
-        {
-            Permission.RequestUserPermission(readMediaVideo);
-        }
-
-        hasLegacy = Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead);
-        hasMediaVideo = Permission.HasUserAuthorizedPermission(readMediaVideo);
-        hasSelectedMedia = Permission.HasUserAuthorizedPermission(readSelectedVisualMedia);
-
-        return hasLegacy || hasMediaVideo || hasSelectedMedia;
+        return HasAnyReadableMediaPermission();
 #else
         return true;
 #endif
     }
 
-    public bool HasReadableMediaPermission()
+    public void RequestReadableMediaPermission()
     {
-        return EnsureAndroidReadPermission();
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (permissionRequestInFlight)
+        {
+            return;
+        }
+
+        StartCoroutine(RequestReadableMediaPermissionRoutine());
+#endif
     }
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+    private IEnumerator RequestReadableMediaPermissionRoutine()
+    {
+        permissionRequestInFlight = true;
+
+        int sdkInt = GetAndroidSdkInt();
+
+        if (sdkInt >= 33)
+        {
+            yield return RequestSinglePermission("android.permission.READ_MEDIA_VIDEO");
+
+            if (!HasAnyReadableMediaPermission() && sdkInt >= 34)
+            {
+                yield return RequestSinglePermission("android.permission.READ_MEDIA_VISUAL_USER_SELECTED");
+            }
+        }
+        else
+        {
+            yield return RequestSinglePermission(Permission.ExternalStorageRead);
+        }
+
+        permissionRequestInFlight = false;
+    }
+
+    private static bool HasAnyReadableMediaPermission()
+    {
+        bool hasLegacy = Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead);
+        bool hasMediaVideo = Permission.HasUserAuthorizedPermission("android.permission.READ_MEDIA_VIDEO");
+        bool hasSelectedVisualMedia = Permission.HasUserAuthorizedPermission("android.permission.READ_MEDIA_VISUAL_USER_SELECTED");
+
+        return hasLegacy || hasMediaVideo || hasSelectedVisualMedia;
+    }
+
+    private static int GetAndroidSdkInt()
+    {
+        try
+        {
+            AndroidJavaClass versionClass = new AndroidJavaClass("android.os.Build$VERSION");
+            return versionClass.GetStatic<int>("SDK_INT");
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static IEnumerator RequestSinglePermission(string permission)
+    {
+        if (string.IsNullOrWhiteSpace(permission) || Permission.HasUserAuthorizedPermission(permission))
+        {
+            yield break;
+        }
+
+        bool completed = false;
+
+        PermissionCallbacks callbacks = new PermissionCallbacks();
+        callbacks.PermissionGranted += _ => { completed = true; };
+        callbacks.PermissionDenied += _ => { completed = true; };
+        callbacks.PermissionDeniedAndDontAskAgain += _ => { completed = true; };
+
+        Permission.RequestUserPermission(permission, callbacks);
+
+        float timeout = 8f;
+        while (!completed && timeout > 0f)
+        {
+            timeout -= Time.unscaledDeltaTime;
+            yield return null;
+        }
+    }
+
+    public void OpenAppPermissionSettings()
+    {
+        try
+        {
+            AndroidJavaClass unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
+            AndroidJavaObject activity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity");
+            string packageName = activity.Call<string>("getPackageName");
+
+            AndroidJavaClass settingsClass = new AndroidJavaClass("android.provider.Settings");
+            AndroidJavaClass uriClass = new AndroidJavaClass("android.net.Uri");
+            AndroidJavaObject uri = uriClass.CallStatic<AndroidJavaObject>("fromParts", "package", packageName, null);
+
+            AndroidJavaObject intent = new AndroidJavaObject("android.content.Intent", settingsClass.GetStatic<string>("ACTION_APPLICATION_DETAILS_SETTINGS"));
+            intent.Call<AndroidJavaObject>("setData", uri);
+            activity.Call("startActivity", intent);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("Failed to open app settings: " + e.Message);
+        }
+    }
+#else
+    public void OpenAppPermissionSettings()
+    {
+    }
+#endif
 
     public void OpenFilePicker()
     {
@@ -152,7 +242,7 @@ public class LocalFileManager : MonoBehaviour
         }
 
 #if UNITY_ANDROID && !UNITY_EDITOR
-        if (localVideos.Count == 0)
+        if (localVideos.Count == 0 && HasAnyReadableMediaPermission())
         {
             AddVideosFromAndroidMediaStore(deduplicate);
         }
@@ -312,11 +402,6 @@ public class LocalFileManager : MonoBehaviour
 #if UNITY_ANDROID && !UNITY_EDITOR
     private void AddVideosFromAndroidMediaStore(HashSet<string> deduplicate)
     {
-        if (!EnsureAndroidReadPermission())
-        {
-            return;
-        }
-
         AndroidJavaObject cursor = null;
 
         try
@@ -409,10 +494,6 @@ public class LocalFileManager : MonoBehaviour
                 });
 
                 deduplicate.Add(dedupKey);
-                if (!string.IsNullOrWhiteSpace(filePath))
-                {
-                    deduplicate.Add(contentUri);
-                }
             }
         }
         catch (Exception e)
