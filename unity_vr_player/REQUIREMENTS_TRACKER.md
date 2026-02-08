@@ -46,8 +46,9 @@ Last Updated: 2026-02-08
 
 ## Round Validation (2026-02-08)
 
-- Code changes completed for SAF picker integration and UI flow switch.
-- CI/APK rebuild status: pending this round commit.
+- Commits: `8bc45b9`, `99c309d`.
+- CI build: `https://github.com/qhwen/vrplayer/actions/runs/21798934684` (success).
+- Built APK: `downloads/VRVideoPlayer.apk`.
 - Device validation focus:
   - Verify `Select Videos` works on Android 15 without granting media permission.
   - Verify selected entries persist after process restart.
