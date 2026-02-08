@@ -51,12 +51,8 @@ jobs:
             echo "License file not found at $LICENSE_PATH"
             exit 1
           fi
-          DELIM="UNITY_LICENSE_$(date +%s)_$RANDOM"
-          {
-            echo "UNITY_LICENSE<<$DELIM"
-            cat "$LICENSE_PATH"
-            echo "$DELIM"
-          } >> "$GITHUB_ENV"
+          UNITY_LICENSE_ONE_LINE=$(tr -d '\r\n' < "$LICENSE_PATH")
+          echo "UNITY_LICENSE=$UNITY_LICENSE_ONE_LINE" >> "$GITHUB_ENV"
 
       - name: Build Android
         uses: game-ci/unity-builder@v4
