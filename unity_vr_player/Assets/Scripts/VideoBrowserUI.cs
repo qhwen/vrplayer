@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 /// <summary>
@@ -40,6 +41,7 @@ public class VideoBrowserUI : MonoBehaviour
     private string idleStatusMessage = "Ready";
     private bool suppressSeekCallback;
     private bool refreshAfterSettingsReturn;
+    private Coroutine permissionFlowCoroutine;
 
     private PlaybackSnapshot lastSnapshot = PlaybackSnapshot.CreateDefault();
 
@@ -65,20 +67,8 @@ public class VideoBrowserUI : MonoBehaviour
 
         localFileManager.LocalVideoLibraryChanged += OnLocalVideoLibraryChanged;
 
-        canvas = FindObjectOfType<Canvas>();
-        if (canvas == null)
-        {
-            GameObject canvasObject = new GameObject("UICanvas");
-            canvas = canvasObject.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-
-            CanvasScaler scaler = canvasObject.AddComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1920f, 1080f);
-            scaler.matchWidthOrHeight = 0.6f;
-
-            canvasObject.AddComponent<GraphicRaycaster>();
-        }
+        EnsureEventSystemExists();
+        canvas = EnsureOverlayCanvas();
 
         BuildPanel();
         RegisterPlaybackEvents();
@@ -102,6 +92,12 @@ public class VideoBrowserUI : MonoBehaviour
         if (progressSlider != null)
         {
             progressSlider.onValueChanged.RemoveListener(OnProgressChanged);
+        }
+
+        if (permissionFlowCoroutine != null)
+        {
+            StopCoroutine(permissionFlowCoroutine);
+            permissionFlowCoroutine = null;
         }
     }
 
@@ -141,6 +137,51 @@ public class VideoBrowserUI : MonoBehaviour
     {
         UpdateControlButtons();
         UpdateRuntimeStatus();
+    }
+
+    private static void EnsureEventSystemExists()
+    {
+        EventSystem current = FindObjectOfType<EventSystem>();
+        if (current != null)
+        {
+            if (current.GetComponent<BaseInputModule>() == null)
+            {
+                current.gameObject.AddComponent<StandaloneInputModule>();
+            }
+
+            return;
+        }
+
+        GameObject eventSystemObject = new GameObject("EventSystem");
+        eventSystemObject.AddComponent<EventSystem>();
+        eventSystemObject.AddComponent<StandaloneInputModule>();
+    }
+
+    private static Canvas EnsureOverlayCanvas()
+    {
+        Canvas existing = GameObject.Find("VideoBrowserCanvas")?.GetComponent<Canvas>();
+        if (existing != null)
+        {
+            if (existing.GetComponent<GraphicRaycaster>() == null)
+            {
+                existing.gameObject.AddComponent<GraphicRaycaster>();
+            }
+
+            return existing;
+        }
+
+        GameObject canvasObject = new GameObject("VideoBrowserCanvas");
+        Canvas created = canvasObject.AddComponent<Canvas>();
+        created.renderMode = RenderMode.ScreenSpaceOverlay;
+        created.sortingOrder = 100;
+
+        CanvasScaler scaler = canvasObject.AddComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920f, 1080f);
+        scaler.matchWidthOrHeight = 0.6f;
+
+        canvasObject.AddComponent<GraphicRaycaster>();
+        return created;
     }
 
     private void BuildPanel()
@@ -253,25 +294,30 @@ public class VideoBrowserUI : MonoBehaviour
         RebuildVideoList(videos);
         SetPermissionButtonsVisible(true);
 
-        bool hasPermission = localFileManager.HasReadableMediaPermission();
+        bool hasReadablePermission = localFileManager.HasReadableMediaPermission();
+        bool hasMoviesPermission = localFileManager.HasMoviesScanPermission();
 
         if (videos.Count == 0)
         {
             idleStatusMessage = "No video selected";
 
-            if (hasPermission)
+            if (hasMoviesPermission)
             {
                 hintText.text = "Tap Select Videos, or put MP4 files in /storage/emulated/0/Movies then tap Refresh.";
             }
+            else if (hasReadablePermission)
+            {
+                hintText.text = "Tap Select Videos to add picked videos. Movies auto scan still needs full video permission.";
+            }
             else
             {
-                hintText.text = "Tap Select Videos to choose files directly. Scan Settings is optional for Movies auto scan.";
+                hintText.text = "Tap Select Videos for direct playback. Tap Scan Settings to request Movies scan permission.";
             }
 
             return;
         }
 
-        if (hasPermission)
+        if (hasMoviesPermission)
         {
             idleStatusMessage = "Found " + videos.Count + " videos. Tap one to play.";
             hintText.text = "Touch and drag outside the panel to rotate the VR view.";
@@ -279,7 +325,7 @@ public class VideoBrowserUI : MonoBehaviour
         }
 
         idleStatusMessage = "Found " + videos.Count + " selected videos. Tap one to play.";
-        hintText.text = "You can use Scan Settings to allow Movies auto scan, but playback works without it.";
+        hintText.text = "Select Videos works without Movies permission. Use Scan Settings only for /Movies auto scan.";
     }
 
     private void SetPermissionButtonsVisible(bool visible)
@@ -386,9 +432,63 @@ public class VideoBrowserUI : MonoBehaviour
 
     private void OnOpenSettingsClicked()
     {
-        refreshAfterSettingsReturn = true;
-        idleStatusMessage = "Open settings to grant Movies auto scan permission.";
-        localFileManager?.OpenAppPermissionSettings();
+        if (localFileManager == null)
+        {
+            return;
+        }
+
+        if (permissionFlowCoroutine != null)
+        {
+            StopCoroutine(permissionFlowCoroutine);
+        }
+
+        permissionFlowCoroutine = StartCoroutine(RequestMoviesPermissionFlow());
+    }
+
+    private IEnumerator RequestMoviesPermissionFlow()
+    {
+        if (localFileManager == null)
+        {
+            permissionFlowCoroutine = null;
+            yield break;
+        }
+
+        if (localFileManager.HasMoviesScanPermission())
+        {
+            idleStatusMessage = "Movies scan permission already granted.";
+            RefreshVideoList();
+            permissionFlowCoroutine = null;
+            yield break;
+        }
+
+        idleStatusMessage = "Requesting Movies permission...";
+        localFileManager.RequestReadableMediaPermission();
+
+        while (localFileManager.IsPermissionRequestInFlight())
+        {
+            yield return null;
+        }
+
+        if (localFileManager.HasMoviesScanPermission())
+        {
+            idleStatusMessage = "Movies scan permission granted.";
+            RefreshVideoList();
+            permissionFlowCoroutine = null;
+            yield break;
+        }
+
+        if (localFileManager.WasLastPermissionRequestDeniedAndDontAskAgain())
+        {
+            refreshAfterSettingsReturn = true;
+            idleStatusMessage = "Permission blocked. Opening app settings...";
+            localFileManager.OpenAppPermissionSettings();
+            permissionFlowCoroutine = null;
+            yield break;
+        }
+
+        idleStatusMessage = "Movies permission denied. You can continue with Select Videos.";
+        RefreshVideoList();
+        permissionFlowCoroutine = null;
     }
 
     private void OnPauseResumeClicked()

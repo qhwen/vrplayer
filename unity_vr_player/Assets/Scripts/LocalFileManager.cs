@@ -15,6 +15,8 @@ using UnityEngine.Android;
 /// </summary>
 public class LocalFileManager : MonoBehaviour
 {
+    private const string AndroidPermissionReadMediaVideo = "android.permission.READ_MEDIA_VIDEO";
+    private const string AndroidPermissionReadMediaVisualUserSelected = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED";
     private static LocalFileManager instance;
     public static LocalFileManager Instance => instance;
 
@@ -98,6 +100,15 @@ public class LocalFileManager : MonoBehaviour
 #endif
     }
 
+    public bool HasMoviesScanPermission()
+    {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        return HasMoviesDirectoryPermission();
+#else
+        return true;
+#endif
+    }
+
     public void RequestReadableMediaPermission()
     {
 #if UNITY_ANDROID && !UNITY_EDITOR
@@ -137,7 +148,12 @@ public class LocalFileManager : MonoBehaviour
 
         if (sdkInt >= 33)
         {
-            yield return RequestSinglePermission("android.permission.READ_MEDIA_VIDEO");
+            yield return RequestSinglePermission(AndroidPermissionReadMediaVideo);
+
+            if (sdkInt >= 34 && !HasMoviesDirectoryPermission())
+            {
+                yield return RequestSinglePermission(AndroidPermissionReadMediaVisualUserSelected);
+            }
         }
         else
         {
@@ -151,11 +167,28 @@ public class LocalFileManager : MonoBehaviour
     {
         int sdkInt = GetAndroidSdkInt();
 
-        bool hasMediaVideo = Permission.HasUserAuthorizedPermission("android.permission.READ_MEDIA_VIDEO");
+        bool hasMediaVideo = Permission.HasUserAuthorizedPermission(AndroidPermissionReadMediaVideo);
+
+        if (sdkInt >= 34)
+        {
+            bool hasSelectedVisual = Permission.HasUserAuthorizedPermission(AndroidPermissionReadMediaVisualUserSelected);
+            return hasMediaVideo || hasSelectedVisual;
+        }
 
         if (sdkInt >= 33)
         {
             return hasMediaVideo;
+        }
+
+        return Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead);
+    }
+
+    private bool HasMoviesDirectoryPermission()
+    {
+        int sdkInt = GetAndroidSdkInt();
+        if (sdkInt >= 33)
+        {
+            return Permission.HasUserAuthorizedPermission(AndroidPermissionReadMediaVideo);
         }
 
         return Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead);
@@ -421,7 +454,14 @@ public class LocalFileManager : MonoBehaviour
 #if UNITY_ANDROID && !UNITY_EDITOR
         if (HasAnyReadableMediaPermission())
         {
-            AddVideosFromAndroidMediaStore(deduplicate);
+            int beforeCount = localVideos.Count;
+            AddVideosFromAndroidMoviesDirectory(deduplicate);
+
+            // Keep MediaStore as fallback when direct Movies path listing finds nothing.
+            if (localVideos.Count == beforeCount && HasMoviesDirectoryPermission())
+            {
+                AddVideosFromAndroidMediaStore(deduplicate);
+            }
         }
 #else
         List<string> roots = BuildSearchRoots();
@@ -626,6 +666,22 @@ public class LocalFileManager : MonoBehaviour
     }
 
 #if UNITY_ANDROID && !UNITY_EDITOR
+    private void AddVideosFromAndroidMoviesDirectory(HashSet<string> deduplicate)
+    {
+        List<string> roots = BuildSearchRoots();
+        bool allowSubdirectories = ShouldScanSubdirectories();
+
+        for (int i = 0; i < roots.Count; i++)
+        {
+            if (deduplicate.Count >= maxCollectedVideos)
+            {
+                return;
+            }
+
+            ScanDirectoryRecursive(roots[i], deduplicate, 0, allowSubdirectories);
+        }
+    }
+
     private void AddVideosFromAndroidMediaStore(HashSet<string> deduplicate)
     {
         AndroidJavaObject cursor = null;
