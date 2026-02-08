@@ -4,46 +4,36 @@ Last Updated: 2026-02-08
 
 ## Current Round Requirements
 
-- R-001: On Android 13+/15, the app must provide an in-app permission request entry and trigger media-read permission request when user taps it.
-- R-002: If the dialog cannot be shown (for example denied with "Don't ask again"), the app must guide user to system settings.
-- R-003: After scanning and finding local videos, the UI must display the video list.
-- R-004: Video list entries must be tappable/selectable and trigger playback.
-- R-005: Keep this file as the dedicated requirement list for each round; after each change, verify implementation against all items.
-- R-006: Local scanning scope on Android must be limited to `Movies` only.
-- R-007: After user returns from system settings, the app must auto-refresh permission state and file list.
-- R-008: Avoid broad startup auto-request behavior; permission request should be explicit from UI action to improve real-device popup reliability.
-- R-009: Avoid long-running broad scans; scanning should not enumerate non-Movies libraries.
+- R-001: Main Android flow must work without relying on storage permission popup.
+- R-002: App must provide a system picker entry (`Select Videos`) that supports selecting one or multiple video files.
+- R-003: Picker-selected videos must appear in the in-app list and be tappable for playback.
+- R-004: Picker-selected videos should persist across app restarts.
+- R-005: `Movies` auto-scan remains optional enhancement; it should run only when media permission is granted.
+- R-006: Keep this file as the dedicated per-round requirement list and verify after each change.
 
 ## Implementation Mapping
 
 - R-001:
-  - `unity_vr_player/Assets/Scripts/VideoBrowserUI.cs`
-  - `OnGrantPermissionClicked()` explicitly triggers permission request flow.
+  - `unity_vr_player/Assets/Plugins/Android/SAFPicker.androidlib/src/main/java/com/vrplayer/saf/SafPickerProxyActivity.java`
+  - Uses `ACTION_OPEN_DOCUMENT` and returns selected `content://` URIs.
 - R-002:
+  - `unity_vr_player/Assets/Scripts/VideoBrowserUI.cs`
+  - `Select Videos` button triggers `LocalFileManager.OpenFilePicker()`.
   - `unity_vr_player/Assets/Scripts/LocalFileManager.cs`
-  - Tracks denied and denied-with-dont-ask-again states.
-  - `unity_vr_player/Assets/Scripts/VideoBrowserUI.cs` keeps `Open Settings` path and guidance text.
+  - Calls `SafPickerBridge.launchVideoPicker(...)`.
 - R-003:
+  - `unity_vr_player/Assets/Scripts/LocalFileManager.cs`
+  - `OnAndroidVideoPickerResult(...)` parses picker payload and appends picked videos.
   - `unity_vr_player/Assets/Scripts/VideoBrowserUI.cs`
-  - Rebuilds list items with deterministic layout and content height.
+  - Subscribes to `LocalVideoLibraryChanged` and refreshes list immediately.
 - R-004:
-  - `unity_vr_player/Assets/Scripts/VideoBrowserUI.cs`
-  - Each list item is a button bound to `PlayVideo(...)`.
-  - `unity_vr_player/Assets/Scripts/VRVideoPlayer.cs` avoids drag interception on UI touches.
+  - `unity_vr_player/Assets/Scripts/LocalFileManager.cs`
+  - Persists picked videos in `PlayerPrefs` (`local_picked_videos_v1`) and reloads at startup.
 - R-005:
-  - This file is maintained as the dedicated per-round checklist.
+  - `unity_vr_player/Assets/Scripts/LocalFileManager.cs`
+  - `RefreshLocalVideos()` always includes picked videos; only scans `Movies` via MediaStore when permission exists.
 - R-006:
-  - `unity_vr_player/Assets/Scripts/LocalFileManager.cs`
-  - Android scan path now queries MediaStore with `relative_path` constrained to `Movies`.
-- R-007:
-  - `unity_vr_player/Assets/Scripts/VideoBrowserUI.cs`
-  - `OnApplicationFocus(true)` refreshes after returning from settings.
-- R-008:
-  - `unity_vr_player/Assets/Scripts/VideoBrowserUI.cs`
-  - Startup no longer auto-requests permission; request occurs on explicit tap.
-- R-009:
-  - `unity_vr_player/Assets/Scripts/LocalFileManager.cs`
-  - Removes broad Android filesystem scan path and relies on Movies-scoped MediaStore query.
+  - This file is maintained and updated in this round.
 
 ## Verification Checklist
 
@@ -51,16 +41,13 @@ Last Updated: 2026-02-08
 - [x] R-002 covered in code.
 - [x] R-003 covered in code.
 - [x] R-004 covered in code.
-- [x] R-005 covered in process/file.
-- [x] R-006 covered in code.
-- [x] R-007 covered in code.
-- [x] R-008 covered in code.
-- [x] R-009 covered in code.
+- [x] R-005 covered in code.
+- [x] R-006 covered in process/file.
 
 ## Round Validation (2026-02-08)
 
-- Commits: `b3c02e8`, `ed2e826`, `fa861cd`.
-- CI build: `https://github.com/qhwen/vrplayer/actions/runs/21798355511` (success).
-- Built APK: `downloads/VRVideoPlayer.apk`.
-- Static code checks completed for changed files.
-- Real device validation still required for permission popup behavior on Android 15 OEM variants (especially selected-media vs allow-all choices).
+- Code changes completed for SAF picker integration and UI flow switch.
+- CI/APK rebuild status: pending this round commit.
+- Device validation focus:
+  - Verify `Select Videos` works on Android 15 without granting media permission.
+  - Verify selected entries persist after process restart.

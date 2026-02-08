@@ -63,6 +63,8 @@ public class VideoBrowserUI : MonoBehaviour
             return;
         }
 
+        localFileManager.LocalVideoLibraryChanged += OnLocalVideoLibraryChanged;
+
         canvas = FindObjectOfType<Canvas>();
         if (canvas == null)
         {
@@ -92,6 +94,11 @@ public class VideoBrowserUI : MonoBehaviour
             playbackService.ErrorOccurred -= OnPlaybackError;
         }
 
+        if (localFileManager != null)
+        {
+            localFileManager.LocalVideoLibraryChanged -= OnLocalVideoLibraryChanged;
+        }
+
         if (progressSlider != null)
         {
             progressSlider.onValueChanged.RemoveListener(OnProgressChanged);
@@ -114,15 +121,9 @@ public class VideoBrowserUI : MonoBehaviour
         RefreshVideoList();
     }
 
-    private IEnumerator WaitForPermissionRequest(float timeoutSeconds)
+    private void OnLocalVideoLibraryChanged()
     {
-        float left = timeoutSeconds;
-
-        while (localFileManager != null && localFileManager.IsPermissionRequestInFlight() && left > 0f)
-        {
-            left -= Time.unscaledDeltaTime;
-            yield return null;
-        }
+        RefreshVideoList();
     }
 
     private void OnApplicationFocus(bool hasFocus)
@@ -184,8 +185,8 @@ public class VideoBrowserUI : MonoBehaviour
         playbackTimeText = CreateFixedLabel(progressRow.transform, "TimeLabel", "00:00 / 00:00", font, 20, 220f);
 
         GameObject permissionRow = CreateHorizontalRow(panelObject.transform, "PermissionRow", new Vector2(0.02f, 0.49f), new Vector2(0.98f, 0.57f));
-        grantPermissionButton = CreateActionButton(permissionRow.transform, "GrantPermissionButton", "Grant Permission", font);
-        openSettingsButton = CreateActionButton(permissionRow.transform, "OpenSettingsButton", "Open Settings", font);
+        grantPermissionButton = CreateActionButton(permissionRow.transform, "SelectVideosButton", "Select Videos", font);
+        openSettingsButton = CreateActionButton(permissionRow.transform, "OpenSettingsButton", "Scan Settings", font);
 
         grantPermissionButton.onClick.AddListener(OnGrantPermissionClicked);
         openSettingsButton.onClick.AddListener(OnOpenSettingsClicked);
@@ -246,40 +247,39 @@ public class VideoBrowserUI : MonoBehaviour
             return;
         }
 
-        idleStatusMessage = "Scanning Movies folder...";
-
-        bool hasPermission = localFileManager.HasReadableMediaPermission();
-        if (!hasPermission)
-        {
-            SetPermissionButtonsVisible(true);
-            RebuildVideoList(new List<VideoFile>());
-
-            idleStatusMessage = "Photos and videos permission required";
-            if (localFileManager.WasLastPermissionRequestDeniedAndDontAskAgain())
-            {
-                hintText.text = "Permission was denied with Don't ask again. Tap Open Settings and choose Allow all photos and videos.";
-            }
-            else
-            {
-                hintText.text = "Tap Grant Permission and choose Allow all photos and videos.";
-            }
-
-            return;
-        }
+        idleStatusMessage = "Refreshing local videos...";
 
         List<VideoFile> videos = localFileManager.GetLocalVideos();
         RebuildVideoList(videos);
-        SetPermissionButtonsVisible(false);
+        SetPermissionButtonsVisible(true);
+
+        bool hasPermission = localFileManager.HasReadableMediaPermission();
 
         if (videos.Count == 0)
         {
-            idleStatusMessage = "No playable video found";
-            hintText.text = "Put MP4 files in /storage/emulated/0/Movies, then tap Refresh.";
+            idleStatusMessage = "No video selected";
+
+            if (hasPermission)
+            {
+                hintText.text = "Tap Select Videos, or put MP4 files in /storage/emulated/0/Movies then tap Refresh.";
+            }
+            else
+            {
+                hintText.text = "Tap Select Videos to choose files directly. Scan Settings is optional for Movies auto scan.";
+            }
+
             return;
         }
 
-        idleStatusMessage = "Found " + videos.Count + " videos. Tap one to play.";
-        hintText.text = "Touch and drag outside the panel to rotate the VR view.";
+        if (hasPermission)
+        {
+            idleStatusMessage = "Found " + videos.Count + " videos. Tap one to play.";
+            hintText.text = "Touch and drag outside the panel to rotate the VR view.";
+            return;
+        }
+
+        idleStatusMessage = "Found " + videos.Count + " selected videos. Tap one to play.";
+        hintText.text = "You can use Scan Settings to allow Movies auto scan, but playback works without it.";
     }
 
     private void SetPermissionButtonsVisible(bool visible)
@@ -375,31 +375,19 @@ public class VideoBrowserUI : MonoBehaviour
 
     private void OnGrantPermissionClicked()
     {
-        if (localFileManager == null || localFileManager.IsPermissionRequestInFlight())
+        if (localFileManager == null)
         {
             return;
         }
 
-        StartCoroutine(RequestPermissionAndRefresh());
-    }
-
-    private IEnumerator RequestPermissionAndRefresh()
-    {
-        if (localFileManager == null)
-        {
-            yield break;
-        }
-
-        idleStatusMessage = "Requesting permission...";
-        localFileManager.RequestReadableMediaPermission();
-        yield return WaitForPermissionRequest(10f);
-        RefreshVideoList();
+        idleStatusMessage = "Opening system picker...";
+        localFileManager.OpenFilePicker();
     }
 
     private void OnOpenSettingsClicked()
     {
         refreshAfterSettingsReturn = true;
-        idleStatusMessage = "Open Settings and choose Allow all photos and videos.";
+        idleStatusMessage = "Open settings to grant Movies auto scan permission.";
         localFileManager?.OpenAppPermissionSettings();
     }
 

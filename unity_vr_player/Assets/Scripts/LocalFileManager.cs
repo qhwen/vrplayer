@@ -29,8 +29,13 @@ public class LocalFileManager : MonoBehaviour
     [SerializeField] private bool includeMoviesSubdirectories;
 #endif
 
+    private const string PickedVideosPrefsKey = "local_picked_videos_v1";
+
     private readonly List<VideoFile> localVideos = new List<VideoFile>();
+    private readonly List<VideoFile> pickedVideos = new List<VideoFile>();
     private readonly string[] supportedExtensions = { ".mp4", ".mkv", ".mov" };
+
+    public event Action LocalVideoLibraryChanged;
 
     private string cacheDirectory = string.Empty;
     private ICacheService cacheService;
@@ -46,6 +51,7 @@ public class LocalFileManager : MonoBehaviour
             instance = this;
             DontDestroyOnLoad(gameObject);
             InitializeCacheDirectory();
+            LoadPickedVideos();
             return;
         }
 
@@ -281,14 +287,102 @@ public class LocalFileManager : MonoBehaviour
         if (!string.IsNullOrWhiteSpace(path))
         {
             AddLocalVideo(path);
+            RefreshLocalVideos();
+            NotifyLocalVideoLibraryChanged();
         }
-#elif UNITY_ANDROID
-        Debug.LogWarning("Android file picker plugin is not integrated yet. Put video files into Movies folder.");
+#elif UNITY_ANDROID && !UNITY_EDITOR
+        if (!LaunchAndroidVideoPicker())
+        {
+            Debug.LogWarning("Failed to open Android system picker.");
+        }
 #elif UNITY_IOS
         Debug.LogWarning("iOS file picker plugin is not integrated yet.");
 #else
         Debug.LogWarning("File picker is not available on this platform.");
 #endif
+    }
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+    private bool LaunchAndroidVideoPicker()
+    {
+        try
+        {
+            AndroidJavaClass bridge = new AndroidJavaClass("com.vrplayer.saf.SafPickerBridge");
+            bridge.CallStatic("launchVideoPicker", gameObject.name, "OnAndroidVideoPickerResult");
+            return true;
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("Failed to invoke Android picker bridge: " + e.Message);
+            return false;
+        }
+    }
+#else
+    private bool LaunchAndroidVideoPicker()
+    {
+        return false;
+    }
+#endif
+
+    public void OnAndroidVideoPickerResult(string payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            RefreshLocalVideos();
+            NotifyLocalVideoLibraryChanged();
+            return;
+        }
+
+        AndroidPickerResult result;
+        try
+        {
+            result = JsonUtility.FromJson<AndroidPickerResult>(payload);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("Failed to parse picker payload: " + e.Message);
+            RefreshLocalVideos();
+            NotifyLocalVideoLibraryChanged();
+            return;
+        }
+
+        if (result == null)
+        {
+            RefreshLocalVideos();
+            NotifyLocalVideoLibraryChanged();
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.error))
+        {
+            Debug.LogWarning("Picker returned error: " + result.error);
+        }
+
+        int added = 0;
+        if (result.videos != null)
+        {
+            for (int i = 0; i < result.videos.Length; i++)
+            {
+                AndroidPickerVideo video = result.videos[i];
+                if (video == null)
+                {
+                    continue;
+                }
+
+                if (AddPickedVideoIfNew(video.uri, video.name, video.size))
+                {
+                    added++;
+                }
+            }
+        }
+
+        if (added > 0)
+        {
+            SavePickedVideos();
+        }
+
+        RefreshLocalVideos();
+        NotifyLocalVideoLibraryChanged();
     }
 
     public void AddLocalVideo(string filePath)
@@ -321,17 +415,15 @@ public class LocalFileManager : MonoBehaviour
     {
         localVideos.Clear();
 
-#if UNITY_ANDROID && !UNITY_EDITOR
-        if (!HasAnyReadableMediaPermission())
-        {
-            Debug.Log("Skip scan: readable media permission missing.");
-            return;
-        }
+        HashSet<string> deduplicate = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddPickedVideos(deduplicate);
 
-        HashSet<string> deduplicate = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        AddVideosFromAndroidMediaStore(deduplicate);
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (HasAnyReadableMediaPermission())
+        {
+            AddVideosFromAndroidMediaStore(deduplicate);
+        }
 #else
-        HashSet<string> deduplicate = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         List<string> roots = BuildSearchRoots();
 
         for (int i = 0; i < roots.Count; i++)
@@ -347,6 +439,41 @@ public class LocalFileManager : MonoBehaviour
 
         localVideos.Sort((a, b) => string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase));
         Debug.Log("Refreshed local videos: " + localVideos.Count);
+    }
+
+    private void AddPickedVideos(HashSet<string> deduplicate)
+    {
+        for (int i = 0; i < pickedVideos.Count; i++)
+        {
+            VideoFile picked = pickedVideos[i];
+            if (picked == null)
+            {
+                continue;
+            }
+
+            string key = picked.localPath;
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                key = picked.path;
+            }
+
+            if (string.IsNullOrWhiteSpace(key) || deduplicate.Contains(key))
+            {
+                continue;
+            }
+
+            localVideos.Add(new VideoFile
+            {
+                name = string.IsNullOrWhiteSpace(picked.name) ? DeriveNameFromUri(key) : picked.name,
+                path = string.IsNullOrWhiteSpace(picked.path) ? key : picked.path,
+                localPath = key,
+                url = string.IsNullOrWhiteSpace(picked.url) ? key : picked.url,
+                is360 = picked.is360,
+                size = picked.size
+            });
+
+            deduplicate.Add(key);
+        }
     }
 
     private bool ShouldScanSubdirectories()
@@ -667,6 +794,189 @@ public class LocalFileManager : MonoBehaviour
         return trailing.IndexOf('/') < 0;
     }
 #endif
+
+    private bool AddPickedVideoIfNew(string uri, string displayName, long size)
+    {
+        if (string.IsNullOrWhiteSpace(uri))
+        {
+            return false;
+        }
+
+        string normalizedUri = uri.Trim();
+        for (int i = 0; i < pickedVideos.Count; i++)
+        {
+            string existingKey = pickedVideos[i].localPath;
+            if (string.IsNullOrWhiteSpace(existingKey))
+            {
+                existingKey = pickedVideos[i].path;
+            }
+
+            if (string.Equals(existingKey, normalizedUri, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        string resolvedName = string.IsNullOrWhiteSpace(displayName) ? DeriveNameFromUri(normalizedUri) : displayName.Trim();
+        if (!IsSupportedVideoSelection(resolvedName, normalizedUri))
+        {
+            return false;
+        }
+
+        pickedVideos.Add(new VideoFile
+        {
+            name = resolvedName,
+            path = normalizedUri,
+            localPath = normalizedUri,
+            url = normalizedUri,
+            is360 = resolvedName.ToLowerInvariant().Contains("360"),
+            size = Math.Max(0, size)
+        });
+
+        return true;
+    }
+
+    private static string DeriveNameFromUri(string uri)
+    {
+        if (string.IsNullOrWhiteSpace(uri))
+        {
+            return "Selected video";
+        }
+
+        string text = uri.Trim();
+        int queryIndex = text.IndexOf('?');
+        if (queryIndex >= 0)
+        {
+            text = text.Substring(0, queryIndex);
+        }
+
+        int slashIndex = text.LastIndexOf('/');
+        string name = slashIndex >= 0 ? text.Substring(slashIndex + 1) : text;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return "Selected video";
+        }
+
+        try
+        {
+            return Uri.UnescapeDataString(name);
+        }
+        catch
+        {
+            return name;
+        }
+    }
+
+    private bool IsSupportedVideoSelection(string displayName, string uri)
+    {
+        if (IsSupportedVideoExtension(Path.GetExtension(displayName)))
+        {
+            return true;
+        }
+
+        if (IsSupportedVideoExtension(Path.GetExtension(uri)))
+        {
+            return true;
+        }
+
+        return uri.StartsWith("content://", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void LoadPickedVideos()
+    {
+        pickedVideos.Clear();
+
+        string payload = PlayerPrefs.GetString(PickedVideosPrefsKey, string.Empty);
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return;
+        }
+
+        PickedVideoStore store;
+        try
+        {
+            store = JsonUtility.FromJson<PickedVideoStore>(payload);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("Failed to parse picked video store: " + e.Message);
+            return;
+        }
+
+        if (store == null || store.items == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < store.items.Length; i++)
+        {
+            PickedVideoEntry entry = store.items[i];
+            if (entry == null)
+            {
+                continue;
+            }
+
+            AddPickedVideoIfNew(entry.uri, entry.name, entry.size);
+        }
+    }
+
+    private void SavePickedVideos()
+    {
+        PickedVideoStore store = new PickedVideoStore
+        {
+            items = new PickedVideoEntry[pickedVideos.Count]
+        };
+
+        for (int i = 0; i < pickedVideos.Count; i++)
+        {
+            VideoFile video = pickedVideos[i];
+            store.items[i] = new PickedVideoEntry
+            {
+                uri = video.localPath,
+                name = video.name,
+                size = video.size
+            };
+        }
+
+        string payload = JsonUtility.ToJson(store);
+        PlayerPrefs.SetString(PickedVideosPrefsKey, payload);
+        PlayerPrefs.Save();
+    }
+
+    private void NotifyLocalVideoLibraryChanged()
+    {
+        LocalVideoLibraryChanged?.Invoke();
+    }
+
+    [Serializable]
+    private class AndroidPickerResult
+    {
+        public bool cancelled;
+        public string error;
+        public AndroidPickerVideo[] videos;
+    }
+
+    [Serializable]
+    private class AndroidPickerVideo
+    {
+        public string uri;
+        public string name;
+        public long size;
+    }
+
+    [Serializable]
+    private class PickedVideoStore
+    {
+        public PickedVideoEntry[] items;
+    }
+
+    [Serializable]
+    private class PickedVideoEntry
+    {
+        public string uri;
+        public string name;
+        public long size;
+    }
 
     private bool IsSupportedVideoExtension(string extension)
     {
