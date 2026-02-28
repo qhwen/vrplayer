@@ -701,7 +701,8 @@ public class LocalFileManager : MonoBehaviour
                 "_id",
                 "display_name",
                 "_size",
-                "relative_path"
+                "relative_path",
+                "bucket_display_name"
             };
 
             string selection;
@@ -734,6 +735,7 @@ public class LocalFileManager : MonoBehaviour
             int nameIndex = cursor.Call<int>("getColumnIndex", "display_name");
             int sizeIndex = cursor.Call<int>("getColumnIndex", "_size");
             int relativePathIndex = cursor.Call<int>("getColumnIndex", "relative_path");
+            int bucketDisplayNameIndex = cursor.Call<int>("getColumnIndex", "bucket_display_name");
 
             while (cursor.Call<bool>("moveToNext"))
             {
@@ -754,6 +756,7 @@ public class LocalFileManager : MonoBehaviour
                 }
 
                 string relativePath = relativePathIndex >= 0 ? cursor.Call<string>("getString", relativePathIndex) : string.Empty;
+                string bucketDisplayName = bucketDisplayNameIndex >= 0 ? cursor.Call<string>("getString", bucketDisplayNameIndex) : string.Empty;
                 long size = sizeIndex >= 0 ? cursor.Call<long>("getLong", sizeIndex) : 0;
                 long mediaId = idIndex >= 0 ? cursor.Call<long>("getLong", idIndex) : -1;
 
