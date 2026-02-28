@@ -760,7 +760,7 @@ public class LocalFileManager : MonoBehaviour
                 long size = sizeIndex >= 0 ? cursor.Call<long>("getLong", sizeIndex) : 0;
                 long mediaId = idIndex >= 0 ? cursor.Call<long>("getLong", idIndex) : -1;
 
-                if (!MatchesMoviesScope(relativePath, bucketDisplayName))
+                if (!MatchesMoviesScope(relativePath))
                 {
                     continue;
                 }
@@ -799,7 +799,7 @@ public class LocalFileManager : MonoBehaviour
         }
     }
 
-    private bool MatchesMoviesScope(string relativePath, string bucketDisplayName)
+    private bool MatchesMoviesScope(string relativePath)
     {
         if (!string.IsNullOrWhiteSpace(relativePath))
         {
@@ -817,13 +817,8 @@ public class LocalFileManager : MonoBehaviour
             return normalizedRelative == "movies";
         }
 
-        // Some providers may not return relative_path on newer Android builds.
-        // Use bucket_display_name as a conservative fallback without relying on deprecated _data paths.
-        if (!string.IsNullOrWhiteSpace(bucketDisplayName))
-        {
-            return string.Equals(bucketDisplayName.Trim(), "Movies", StringComparison.OrdinalIgnoreCase);
-        }
-
+        // Android 10+ may not expose absolute _data paths; keep filtering strictly based on relative_path
+        // so /Movies scope stays deterministic on Android 14/15.
         return false;
     }
 #endif
