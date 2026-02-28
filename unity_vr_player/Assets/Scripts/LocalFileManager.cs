@@ -17,6 +17,7 @@ public class LocalFileManager : MonoBehaviour
 {
     private const string AndroidPermissionReadMediaVideo = "android.permission.READ_MEDIA_VIDEO";
     private const string AndroidPermissionReadMediaVisualUserSelected = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED";
+    private const string AndroidPermissionReadExternalStorage = "android.permission.READ_EXTERNAL_STORAGE";
     private static LocalFileManager instance;
     public static LocalFileManager Instance => instance;
 
@@ -157,7 +158,7 @@ public class LocalFileManager : MonoBehaviour
         }
         else
         {
-            yield return RequestSinglePermission(Permission.ExternalStorageRead);
+            yield return RequestSinglePermission(AndroidPermissionReadExternalStorage);
         }
 
         permissionRequestInFlight = false;
@@ -180,7 +181,7 @@ public class LocalFileManager : MonoBehaviour
             return hasMediaVideo;
         }
 
-        return Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead);
+        return Permission.HasUserAuthorizedPermission(AndroidPermissionReadExternalStorage);
     }
 
     private bool HasMoviesDirectoryPermission()
@@ -191,7 +192,7 @@ public class LocalFileManager : MonoBehaviour
             return Permission.HasUserAuthorizedPermission(AndroidPermissionReadMediaVideo);
         }
 
-        return Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead);
+        return Permission.HasUserAuthorizedPermission(AndroidPermissionReadExternalStorage);
     }
 
     private static int GetAndroidSdkInt()
@@ -698,10 +699,10 @@ public class LocalFileManager : MonoBehaviour
             string[] projection =
             {
                 "_id",
-                "_data",
                 "display_name",
                 "_size",
-                "relative_path"
+                "relative_path",
+                "bucket_display_name"
             };
 
             string selection;
@@ -731,10 +732,10 @@ public class LocalFileManager : MonoBehaviour
             }
 
             int idIndex = cursor.Call<int>("getColumnIndex", "_id");
-            int dataIndex = cursor.Call<int>("getColumnIndex", "_data");
             int nameIndex = cursor.Call<int>("getColumnIndex", "display_name");
             int sizeIndex = cursor.Call<int>("getColumnIndex", "_size");
             int relativePathIndex = cursor.Call<int>("getColumnIndex", "relative_path");
+            int bucketDisplayNameIndex = cursor.Call<int>("getColumnIndex", "bucket_display_name");
 
             while (cursor.Call<bool>("moveToNext"))
             {
@@ -754,30 +755,18 @@ public class LocalFileManager : MonoBehaviour
                     continue;
                 }
 
-                string filePath = dataIndex >= 0 ? cursor.Call<string>("getString", dataIndex) : string.Empty;
                 string relativePath = relativePathIndex >= 0 ? cursor.Call<string>("getString", relativePathIndex) : string.Empty;
+                string bucketDisplayName = bucketDisplayNameIndex >= 0 ? cursor.Call<string>("getString", bucketDisplayNameIndex) : string.Empty;
                 long size = sizeIndex >= 0 ? cursor.Call<long>("getLong", sizeIndex) : 0;
                 long mediaId = idIndex >= 0 ? cursor.Call<long>("getLong", idIndex) : -1;
 
-                if (!MatchesMoviesScope(filePath, relativePath))
+                if (!MatchesMoviesScope(relativePath, bucketDisplayName))
                 {
                     continue;
                 }
 
                 string contentUri = mediaId >= 0 ? "content://media/external/video/media/" + mediaId : string.Empty;
-
-                if (string.IsNullOrWhiteSpace(filePath) && !string.IsNullOrWhiteSpace(relativePath))
-                {
-                    string rel = relativePath.Replace("\\", "/").TrimStart('/');
-                    if (!rel.EndsWith("/"))
-                    {
-                        rel += "/";
-                    }
-
-                    filePath = "/storage/emulated/0/" + rel + displayName;
-                }
-
-                string dedupKey = !string.IsNullOrWhiteSpace(filePath) ? filePath : contentUri;
+                string dedupKey = !string.IsNullOrWhiteSpace(contentUri) ? contentUri : displayName;
                 if (string.IsNullOrWhiteSpace(dedupKey) || deduplicate.Contains(dedupKey))
                 {
                     continue;
@@ -786,9 +775,9 @@ public class LocalFileManager : MonoBehaviour
                 localVideos.Add(new VideoFile
                 {
                     name = displayName,
-                    path = !string.IsNullOrWhiteSpace(filePath) ? filePath : contentUri,
-                    localPath = !string.IsNullOrWhiteSpace(filePath) ? filePath : contentUri,
-                    url = !string.IsNullOrWhiteSpace(filePath) ? ("file://" + filePath) : contentUri,
+                    path = string.IsNullOrWhiteSpace(contentUri) ? dedupKey : contentUri,
+                    localPath = dedupKey,
+                    url = string.IsNullOrWhiteSpace(contentUri) ? dedupKey : contentUri,
                     is360 = displayName.ToLowerInvariant().Contains("360"),
                     size = size
                 });
@@ -810,7 +799,7 @@ public class LocalFileManager : MonoBehaviour
         }
     }
 
-    private bool MatchesMoviesScope(string filePath, string relativePath)
+    private bool MatchesMoviesScope(string relativePath, string bucketDisplayName)
     {
         if (!string.IsNullOrWhiteSpace(relativePath))
         {
@@ -828,26 +817,14 @@ public class LocalFileManager : MonoBehaviour
             return normalizedRelative == "movies";
         }
 
-        if (string.IsNullOrWhiteSpace(filePath))
+        // Some providers may not return relative_path on newer Android builds.
+        // Use bucket_display_name as a conservative fallback without relying on deprecated _data paths.
+        if (!string.IsNullOrWhiteSpace(bucketDisplayName))
         {
-            return false;
+            return string.Equals(bucketDisplayName.Trim(), "Movies", StringComparison.OrdinalIgnoreCase);
         }
 
-        string normalizedPath = filePath.Replace("\\", "/").ToLowerInvariant();
-        const string marker = "/movies/";
-        int markerIndex = normalizedPath.IndexOf(marker, StringComparison.Ordinal);
-        if (markerIndex < 0)
-        {
-            return false;
-        }
-
-        if (includeMoviesSubdirectories)
-        {
-            return true;
-        }
-
-        string trailing = normalizedPath.Substring(markerIndex + marker.Length);
-        return trailing.IndexOf('/') < 0;
+        return false;
     }
 #endif
 
