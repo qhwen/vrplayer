@@ -2,14 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.vrplayer.safpicker">
 
-    <application>
-        <activity
-            android:name="com.vrplayer.saf.SafPickerProxyActivity"
-            android:excludeFromRecents="true"
-            android:exported="false"
-            android:launchMode="singleTask"
-            android:noHistory="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
-    </application>
+    <!-- 这个库模块的清单应该为空，让主 AndroidManifest.xml 接管 activity 注册 -->
+    <!-- SafPickerProxyActivity 已在 Assets/Plugins/Android/AndroidManifest.xml 中声明 -->
 
 </manifest>
