@@ -33,3 +33,6 @@ Assets/AddressableAssetsData/*/*.bin*
 
 # Auto-generated meta backup
 *.orig
+.tmp/
+.tools/
+downloads/

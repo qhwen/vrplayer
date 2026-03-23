@@ -149,11 +149,21 @@ public class LocalFileManager : MonoBehaviour
 
         if (sdkInt >= 33)
         {
+            // 首先请求完整的视频媒体权限
             yield return RequestSinglePermission(AndroidPermissionReadMediaVideo);
-
-            if (sdkInt >= 34 && !HasMoviesDirectoryPermission())
+            
+            // 对于 Android 14+ (API 34+)，如果用户拒绝了完整权限，请求部分权限
+            if (sdkInt >= 34)
             {
-                yield return RequestSinglePermission(AndroidPermissionReadMediaVisualUserSelected);
+                // 检查是否已经获得任何权限
+                bool hasVideoPermission = Permission.HasUserAuthorizedPermission(AndroidPermissionReadMediaVideo);
+                bool hasSelectedPermission = Permission.HasUserAuthorizedPermission(AndroidPermissionReadMediaVisualUserSelected);
+                
+                // 如果两个权限都没有，请求部分访问权限
+                if (!hasVideoPermission && !hasSelectedPermission)
+                {
+                    yield return RequestSinglePermission(AndroidPermissionReadMediaVisualUserSelected);
+                }
             }
         }
         else

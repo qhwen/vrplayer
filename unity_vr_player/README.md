@@ -139,6 +139,24 @@ unity_vr_player/
 - `LoadVideoPlayerScene()` - 加载播放器场景
 - `LoadSettingsScene()` - 加载设置场景
 
+## 🔧 Android 15 兼容性修复
+
+**重要：** 如果您在 Android 15 设备上遇到无法选择视频的问题，请查看：
+
+**[Android 15 修复指南 (ANDROID_15_FIX.md)](./ANDROID_15_FIX.md)**
+
+该文档包含：
+- 问题根本原因分析
+- Android 13-15 权限模型详解
+- 完整的修复步骤
+- 测试和调试指南
+- 常见问题解答
+
+**快速修复：**
+1. 确保 `Assets/Plugins/Android/AndroidManifest.xml` 文件存在
+2. 重新构建并安装 APK
+3. 首次运行时授予应用视频访问权限
+
 ## 快速开始
 
 ### 1. 环境要求
@@ -352,6 +370,47 @@ Build: 构建
 - 使用 Unity Profiler 检查性能
 - 查找内存泄漏
 - 优化帧率
+
+## 📚 开发文档
+
+### 核心文档
+
+- **[开发指南 (DEVELOPMENT_GUIDE.md)](./DEVELOPMENT_GUIDE.md)** - 全面的开发文档，包含：
+  - 项目架构与设计理念
+  - 核心模块详解
+  - 技术栈说明
+  - 开发环境配置
+  - 代码结构说明
+  - API 文档
+  - 开发规范
+  - 常见问题解答
+
+- **[实施计划 (IMPLEMENTATION_PLAN.md)](./IMPLEMENTATION_PLAN.md)** - 项目实施计划与里程碑
+
+- **[需求追踪 (REQUIREMENTS_TRACKER.md)](./REQUIREMENTS_TRACKER.md)** - 当前迭代需求追踪
+
+- **[详细计划 (DETAILED_PLAN.md)](./DETAILED_PLAN.md)** - 详细的开发步骤
+
+### 快速导航
+
+**架构设计**：
+- [分层架构](./DEVELOPMENT_GUIDE.md#架构设计)
+- [核心接口](./DEVELOPMENT_GUIDE.md#核心接口)
+- [状态机设计](./DEVELOPMENT_GUIDE.md#状态机设计)
+
+**开发指南**：
+- [环境配置](./DEVELOPMENT_GUIDE.md#开发环境配置)
+- [代码结构](./DEVELOPMENT_GUIDE.md#代码结构)
+- [开发规范](./DEVELOPMENT_GUIDE.md#开发规范)
+
+**平台适配**：
+- [Android 平台](./DEVELOPMENT_GUIDE.md#android-平台)
+- [iOS 平台](./DEVELOPMENT_GUIDE.md#ios-平台)
+- [Windows 平台](./DEVELOPMENT_GUIDE.md#windows-平台)
+
+**构建部署**：
+- [本地构建](./DEVELOPMENT_GUIDE.md#本地构建)
+- [CI/CD 构建](./DEVELOPMENT_GUIDE.md#cicd-构建)
 
 ## 贡献指南
 
