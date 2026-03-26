@@ -2,14 +2,13 @@ name: Build Unity VR Player
 
 on:
   push:
-    branches:
-      - master
-    tags:
-      - v*
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
   workflow_dispatch:
 
 concurrency:
-  group: build-android-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -19,84 +18,94 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      - name: Checkout
+      # 1. 检出代码
+      - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          lfs: true
 
-      - name: Cache Library
+      # 2. 缓存 Unity Library 目录
+      - name: Cache Unity Library
         uses: actions/cache@v4
         with:
-          path: unity_vr_player/Library
-          key: Library-Android-${{ hashFiles('unity_vr_player/Packages/manifest.json', 'unity_vr_player/ProjectSettings/ProjectVersion.txt') }}
+          path: |
+            unity_vr_player/Library
+          key: Library-Android-${{ hashFiles('unity_vr_player/Packages/manifest.json', 'unity_vr_player/Packages/packages-lock.json') }}
           restore-keys: |
             Library-Android-
 
-      - name: Install Unity Hub
-        run: |
-          sudo mkdir -p /usr/share/keyrings
-          wget -qO - https://hub.unity3d.com/linux/keys/public | gpg --dearmor | sudo tee /usr/share/keyrings/Unity_Technologies_ApS.gpg > /dev/null
-          echo "deb [signed-by=/usr/share/keyrings/Unity_Technologies_ApS.gpg] https://hub.unity3d.com/linux/repos/deb stable main" | sudo tee /etc/apt/sources.list.d/unityhub.list
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends unityhub
-
-      - name: Activate Unity License
-        uses: buildalon/activate-unity-license@v2
-        env:
-          UNITY_HUB_PATH: /opt/unityhub/unityhub
+      # 3. 安装 Unity (使用 Unity Hub)
+      - name: Install Unity
+        uses: game-ci/unity-installer-action@v4
         with:
-          license: Personal
-          username: ${{ secrets.UNITY_EMAIL || secrets.UNITY_USERNAME }}
-          password: ${{ secrets.UNITY_PASSWORD }}
+          unity-version: '2022.3.40f1'
+          license: ${{ secrets.UNITY_LICENSE }}
 
-      - name: Export Unity License To Env
-        shell: bash
-        run: |
-          LICENSE_PATH="$HOME/.local/share/unity3d/Unity/Unity_lic.ulf"
-          if [ ! -f "$LICENSE_PATH" ]; then
-            echo "License file not found at $LICENSE_PATH"
-            exit 1
-          fi
-          UNITY_LICENSE_ONE_LINE=$(tr -d '\r\n' < "$LICENSE_PATH")
-          echo "::add-mask::$UNITY_LICENSE_ONE_LINE"
-          echo "UNITY_LICENSE=$UNITY_LICENSE_ONE_LINE" >> "$GITHUB_ENV"
-
-      - name: Build Android
+      # 4. 构建 Android APK
+      - name: Build Android APK
         uses: game-ci/unity-builder@v4
-        env:
-          UNITY_LICENSE: ${{ env.UNITY_LICENSE }}
-          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL || secrets.UNITY_USERNAME }}
-          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-          UNITY_VERSION_CODE: ${{ github.run_number }}
-          UNITY_VERSION_NAME: 1.0.${{ github.run_number }}
         with:
           projectPath: unity_vr_player
-          unityVersion: 2022.3.40f1
           targetPlatform: Android
-          buildMethod: BuildAndroid.PerformBuild
-          androidKeystoreName: user.keystore
-          androidKeystoreBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          androidKeystorePass: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          androidAppBundle: false
+          androidExportType: androidPackage
+          androidKeyStoreName: keystore.keystore
+          androidKeyStoreBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           androidKeyaliasName: ${{ secrets.ANDROID_KEYALIAS_NAME }}
           androidKeyaliasPass: ${{ secrets.ANDROID_KEYALIAS_PASS }}
-          customParameters: -logFile /github/workspace/unity-build.log
+          buildName: VRVideoPlayer
+          buildsPath: build
+          versioning: Semantic
 
+      # 5. 上传构建产物
       - name: Upload APK Artifact
-        if: always()
         uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: VRVideoPlayer-Android-APK
           path: |
-            unity_vr_player/builds/Android/*.apk
-            unity_vr_player/builds/Android/**/*.apk
-          if-no-files-found: warn
+            build/Android/*.apk
+          retention-days: 7
 
-      - name: Upload Build Log
-        if: always()
-        uses: actions/upload-artifact@v4
+  build-tests:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
         with:
-          name: Unity-Build-Log
-          path: |
-            unity-build.log
-            unity_vr_player/unity-build.log
-            unity_vr_player/Library/PlayerDataCache/**/Editor.log
-          if-no-files-found: warn
+          submodules: recursive
 
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: |
+            unity_vr_player/Library
+          key: Library-Tests-${{ hashFiles('unity_vr_player/Packages/manifest.json') }}
+          restore-keys: |
+            Library-Tests-
+
+      - name: Install Unity
+        uses: game-ci/unity-installer-action@v4
+        with:
+          unity-version: '2022.3.40f1'
+          license: ${{ secrets.UNITY_LICENSE }}
+
+      - name: Run Unit Tests
+        uses: game-ci/unity-test-runner@v4
+        with:
+          projectPath: unity_vr_player
+          testMode: playmode
+          artifactsPath: TestResults
+          coverageOptions: 'generateAdditionalMetrics;generateHtmlReport;generateBadges;generateAdditionalMetrics'
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Test-Results
+          path: TestResults
+          retention-days: 3
