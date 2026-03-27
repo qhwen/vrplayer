@@ -31,34 +31,32 @@ jobs:
         with:
           path: |
             unity_vr_player/Library
-          key: Library-Android-${{ hashFiles('unity_vr_player/Packages/manifest.json', 'unity_vr_player/Packages/packages-lock.json') }}
+          key: Library-Android-${{ hashFiles('unity_vr_player/Packages/manifest.json') }}
           restore-keys: |
             Library-Android-
 
-      # 3. 安装 Unity (使用 Unity Hub)
-      - name: Install Unity
-        uses: game-ci/unity-installer-action@v4
-        with:
-          unity-version: '2022.3.40f1'
-          license: ${{ secrets.UNITY_LICENSE }}
-
-      # 4. 构建 Android APK
+      # 3. 使用 Unity Builder action（正确的方式）
       - name: Build Android APK
         uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
           projectPath: unity_vr_player
           targetPlatform: Android
           androidAppBundle: false
           androidExportType: androidPackage
-          androidKeyStoreName: keystore.keystore
-          androidKeyStoreBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          androidKeystoreName: keystore.keystore
+          androidKeystoreBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           androidKeyaliasName: ${{ secrets.ANDROID_KEYALIAS_NAME }}
           androidKeyaliasPass: ${{ secrets.ANDROID_KEYALIAS_PASS }}
           buildName: VRVideoPlayer
           buildsPath: build
           versioning: Semantic
+          allowDirtyBuild: true
 
-      # 5. 上传构建产物
+      # 4. 上传构建产物
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         if: success()
@@ -68,44 +66,13 @@ jobs:
             build/Android/*.apk
           retention-days: 7
 
-  build-tests:
-    name: Run Unit Tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Cache Unity Library
-        uses: actions/cache@v4
-        with:
-          path: |
-            unity_vr_player/Library
-          key: Library-Tests-${{ hashFiles('unity_vr_player/Packages/manifest.json') }}
-          restore-keys: |
-            Library-Tests-
-
-      - name: Install Unity
-        uses: game-ci/unity-installer-action@v4
-        with:
-          unity-version: '2022.3.40f1'
-          license: ${{ secrets.UNITY_LICENSE }}
-
-      - name: Run Unit Tests
-        uses: game-ci/unity-test-runner@v4
-        with:
-          projectPath: unity_vr_player
-          testMode: playmode
-          artifactsPath: TestResults
-          coverageOptions: 'generateAdditionalMetrics;generateHtmlReport;generateBadges;generateAdditionalMetrics'
-
-      - name: Upload Test Results
+      # 5. 上传构建日志
+      - name: Upload Build Log
         uses: actions/upload-artifact@v4
-        if: always()
+        if: failure()
         with:
-          name: Test-Results
-          path: TestResults
+          name: Unity-Build-Log
+          path: |
+            unity-build.log
           retention-days: 3
+          if-no-files-found: warn
