@@ -1,154 +1,120 @@
-using UnityEngine;
 using UnityEditor;
-using UnityEngine.SceneManagement;
+using UnityEditor.SceneManagement;
+using UnityEngine;
 
 namespace VRPlayer.Editor
 {
     /// <summary>
-    /// 快速创建架构测试场景
+    /// 快速创建当前架构可运行的测试场景。
     /// </summary>
     public class CreateTestScene : EditorWindow
     {
         [MenuItem("VR Player/Testing/Create Test Scene")]
         public static void ShowWindow()
         {
-            var window = GetWindow<CreateTestScene>("Create Test Scene");
-            window.minSize = new Vector2(400, 300);
+            CreateTestScene window = GetWindow<CreateTestScene>("Create Test Scene");
+            window.minSize = new Vector2(420f, 280f);
         }
 
         private void OnGUI()
         {
-            GUILayout.Label("架构测试场景生成器", EditorStyles.boldLabel);
-            GUILayout.Space(10);
+            GUILayout.Label("运行时测试场景生成器", EditorStyles.boldLabel);
+            GUILayout.Space(10f);
 
-            GUILayout.Label("此工具将自动创建一个完整的测试场景，包含：", EditorStyles.label);
-            GUILayout.Label("  - LibraryManager", EditorStyles.label);
-            GUILayout.Label("  - PlaybackOrchestrator", EditorStyles.label);
-            GUILayout.Label("  - ArchitectureTest", EditorStyles.label);
+            GUILayout.Label("将创建以下对象：", EditorStyles.label);
+            GUILayout.Label("  - LocalFileManager", EditorStyles.label);
+            GUILayout.Label("  - WebDAVManager", EditorStyles.label);
+            GUILayout.Label("  - VRVideoPlayer (含 UnityVideoPlaybackService)", EditorStyles.label);
+            GUILayout.Label("  - VideoBrowserUI", EditorStyles.label);
             GUILayout.Label("  - Directional Light", EditorStyles.label);
-            GUILayout.Space(10);
+            GUILayout.Space(10f);
 
-            if (GUILayout.Button("创建测试场景", GUILayout.Height(40)))
+            if (GUILayout.Button("创建测试场景", GUILayout.Height(40f)))
             {
                 CreateScene();
             }
 
-            GUILayout.Space(10);
-            
+            GUILayout.Space(8f);
             EditorGUILayout.HelpBox(
-                "场景将创建在 Assets/Scenes/ArchitectureTest.unity\n" +
-                "创建完成后，点击 Play 按钮即可运行测试",
+                "场景会保存到 Assets/Scenes/RuntimeTest.unity。\n创建完成后可直接 Play 验证本地视频浏览与播放流程。",
                 MessageType.Info);
         }
 
-        private void CreateScene()
+        private static void CreateScene()
         {
-            // 创建新场景
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
-            // 1. 创建 LibraryManager
-            var libraryManagerGO = new GameObject("LibraryManager");
-            var libraryManager = libraryManagerGO.AddComponent<LibraryManager>();
-            
-            // 设置初始配置
-            var soLibrary = new SerializedObject(libraryManager);
-            soLibrary.FindProperty("enableAutoScan").boolValue = false;
-            soLibrary.FindProperty("scanOnStartup").boolValue = false;
-            soLibrary.ApplyModifiedProperties();
+            GameObject localFileManagerGO = new GameObject("LocalFileManager");
+            localFileManagerGO.AddComponent<LocalFileManager>();
+            Debug.Log("✓ LocalFileManager 已创建");
 
-            Debug.Log("✓ LibraryManager 已创建");
+            GameObject webDavManagerGO = new GameObject("WebDAVManager");
+            webDavManagerGO.AddComponent<WebDAVManager>();
+            Debug.Log("✓ WebDAVManager 已创建");
 
-            // 2. 创建 PlaybackOrchestrator
-            var orchestratorGO = new GameObject("PlaybackOrchestrator");
-            var orchestrator = orchestratorGO.AddComponent<PlaybackOrchestrator>();
-            
-            // 设置初始配置
-            var soPlayback = new SerializedObject(orchestrator);
-            soPlayback.FindProperty("enableAutoCache").boolValue = true;
-            soPlayback.FindProperty("autoPrepare").boolValue = true;
-            soPlayback.ApplyModifiedProperties();
+            GameObject playerGO = new GameObject("VRVideoPlayer");
+            playerGO.AddComponent<VRVideoPlayer>();
+            Debug.Log("✓ VRVideoPlayer 已创建");
 
-            Debug.Log("✓ PlaybackOrchestrator 已创建");
+            GameObject uiGO = new GameObject("VideoBrowserUI");
+            uiGO.AddComponent<VideoBrowserUI>();
+            Debug.Log("✓ VideoBrowserUI 已创建");
 
-            // 3. 创建 ArchitectureTest
-            var testGO = new GameObject("ArchitectureTest");
-            var test = testGO.AddComponent<ArchitectureTest>();
-            
-            // 设置初始配置
-            var soTest = new SerializedObject(test);
-            soTest.FindProperty("autoStart").boolValue = true;
-            soTest.FindProperty("testEventBus").boolValue = true;
-            soTest.FindProperty("testLogger").boolValue = true;
-            soTest.FindProperty("testConfig").boolValue = true;
-            soTest.FindProperty("testPlaybackOrchestrator").boolValue = true;
-            soTest.FindProperty("testLibraryManager").boolValue = true;
-            soTest.ApplyModifiedProperties();
-
-            Debug.Log("✓ ArchitectureTest 已创建");
-
-            // 4. 创建 Directional Light
-            var lightGO = new GameObject("Directional Light");
-            var light = lightGO.AddComponent<Light>();
+            GameObject lightGO = new GameObject("Directional Light");
+            Light light = lightGO.AddComponent<Light>();
             light.type = LightType.Directional;
             light.shadows = LightShadows.Soft;
             light.intensity = 1.0f;
-
             Debug.Log("✓ Directional Light 已创建");
 
-            // 5. 创建场景目录（如果不存在）
-            var scenePath = "Assets/Scenes";
-            if (!System.IO.Directory.Exists(scenePath))
+            const string sceneDirectory = "Assets/Scenes";
+            if (!System.IO.Directory.Exists(sceneDirectory))
             {
-                System.IO.Directory.CreateDirectory(scenePath);
-                Debug.Log("✓ Scenes 目录已创建");
+                System.IO.Directory.CreateDirectory(sceneDirectory);
             }
 
-            // 6. 保存场景
-            var sceneSavePath = $"{scenePath}/ArchitectureTest.unity";
-            var saveSuccess = EditorSceneManager.SaveScene(scene, sceneSavePath);
+            string savePath = sceneDirectory + "/RuntimeTest.unity";
+            bool saveSuccess = EditorSceneManager.SaveScene(scene, savePath);
 
-            if (saveSuccess)
-            {
-                Debug.Log($"✅ 测试场景已创建并保存到: {sceneSavePath}");
-                Debug.Log("点击 Play 按钮 ▶️ 开始测试");
-                
-                EditorUtility.DisplayDialog(
-                    "场景创建成功！",
-                    $"测试场景已创建并保存到:\n{sceneSavePath}\n\n点击 Play 按钮开始测试。",
-                    "确定"
-                );
-            }
-            else
+            if (!saveSuccess)
             {
                 Debug.LogError("❌ 保存场景失败");
+                return;
             }
+
+            Debug.Log("✅ 测试场景已保存: " + savePath);
+            EditorUtility.DisplayDialog(
+                "场景创建成功",
+                "测试场景已创建并保存到:\n" + savePath + "\n\n可点击 Play 进行验证。",
+                "确定");
         }
     }
 
     /// <summary>
-    /// 打开测试场景的快捷菜单
+    /// 打开测试场景快捷入口。
     /// </summary>
-    public class OpenTestScene
+    public static class OpenTestScene
     {
         [MenuItem("VR Player/Testing/Open Test Scene")]
         public static void OpenScene()
         {
-            var scenePath = "Assets/Scenes/ArchitectureTest.unity";
+            const string scenePath = "Assets/Scenes/RuntimeTest.unity";
             if (System.IO.File.Exists(scenePath))
             {
                 EditorSceneManager.OpenScene(scenePath);
-                Debug.Log("已打开测试场景");
+                Debug.Log("已打开测试场景: " + scenePath);
+                return;
             }
-            else
+
+            bool shouldCreate = EditorUtility.DisplayDialog(
+                "测试场景不存在",
+                "RuntimeTest 场景尚未创建，是否现在创建？",
+                "创建",
+                "取消");
+
+            if (shouldCreate)
             {
-                if (EditorUtility.DisplayDialog(
-                    "测试场景不存在",
-                    "测试场景尚未创建。\n是否现在创建？",
-                    "创建",
-                    "取消"))
-                {
-                    CreateTestScene.ShowWindow();
-                }
+                CreateTestScene.ShowWindow();
             }
         }
     }
