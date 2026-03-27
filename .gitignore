@@ -36,3 +36,4 @@ Assets/AddressableAssetsData/*/*.bin*
 .tmp/
 .tools/
 downloads/
+Temp_Backup/
