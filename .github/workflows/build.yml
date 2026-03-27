@@ -2,13 +2,14 @@ name: Build Unity VR Player
 
 on:
   push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
+    branches:
+      - master
+    tags:
+      - v*
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: build-android-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -18,61 +19,83 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      # 1. 检出代码
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          lfs: true
 
-      # 2. 缓存 Unity Library 目录
-      - name: Cache Unity Library
+      - name: Cache Library
         uses: actions/cache@v4
         with:
-          path: |
-            unity_vr_player/Library
-          key: Library-Android-${{ hashFiles('unity_vr_player/Packages/manifest.json') }}
+          path: unity_vr_player/Library
+          key: Library-Android-${{ hashFiles('unity_vr_player/Packages/manifest.json', 'unity_vr_player/ProjectSettings/ProjectVersion.txt') }}
           restore-keys: |
             Library-Android-
 
-      # 3. 使用 Unity Builder action（正确的方式）
-      - name: Build Android APK
+      - name: Install Unity Hub
+        run: |
+          sudo mkdir -p /usr/share/keyrings
+          wget -qO - https://hub.unity3d.com/linux/keys/public | gpg --dearmor | sudo tee /usr/share/keyrings/Unity_Technologies_ApS.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/Unity_Technologies_ApS.gpg] https://hub.unity3d.com/linux/repos/deb stable main" | sudo tee /etc/apt/sources.list.d/unityhub.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends unityhub
+
+      - name: Activate Unity License
+        uses: buildalon/activate-unity-license@v2
+        env:
+          UNITY_HUB_PATH: /opt/unityhub/unityhub
+        with:
+          license: Personal
+          username: ${{ secrets.UNITY_EMAIL || secrets.UNITY_USERNAME }}
+          password: ${{ secrets.UNITY_PASSWORD }}
+
+      - name: Export Unity License To Env
+        shell: bash
+        run: |
+          LICENSE_PATH="$HOME/.local/share/unity3d/Unity/Unity_lic.ulf"
+          if [ ! -f "$LICENSE_PATH" ]; then
+            echo "License file not found at $LICENSE_PATH"
+            exit 1
+          fi
+          UNITY_LICENSE_ONE_LINE=$(tr -d '\r\n' < "$LICENSE_PATH")
+          echo "::add-mask::$UNITY_LICENSE_ONE_LINE"
+          echo "UNITY_LICENSE=$UNITY_LICENSE_ONE_LINE" >> "$GITHUB_ENV"
+
+      - name: Build Android
         uses: game-ci/unity-builder@v4
         env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_LICENSE: ${{ env.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL || secrets.UNITY_USERNAME }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_VERSION_CODE: ${{ github.run_number }}
+          UNITY_VERSION_NAME: 1.0.${{ github.run_number }}
         with:
           projectPath: unity_vr_player
+          unityVersion: 2022.3.40f1
           targetPlatform: Android
-          androidAppBundle: false
-          androidExportType: androidPackage
-          androidKeystoreName: keystore.keystore
+          buildMethod: BuildAndroid.PerformBuild
+          androidKeystoreName: user.keystore
           androidKeystoreBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          androidKeystorePass: ${{ secrets.ANDROID_KEYSTORE_PASS }}
           androidKeyaliasName: ${{ secrets.ANDROID_KEYALIAS_NAME }}
           androidKeyaliasPass: ${{ secrets.ANDROID_KEYALIAS_PASS }}
-          buildName: VRVideoPlayer
-          buildsPath: build
-          versioning: Semantic
-          allowDirtyBuild: true
+          customParameters: -logFile /github/workspace/unity-build.log
 
-      # 4. 上传构建产物
       - name: Upload APK Artifact
+        if: always()
         uses: actions/upload-artifact@v4
-        if: success()
         with:
           name: VRVideoPlayer-Android-APK
           path: |
-            build/Android/*.apk
-          retention-days: 7
+            unity_vr_player/builds/Android/*.apk
+            unity_vr_player/builds/Android/**/*.apk
+          if-no-files-found: warn
 
-      # 5. 上传构建日志
       - name: Upload Build Log
+        if: always()
         uses: actions/upload-artifact@v4
-        if: failure()
         with:
           name: Unity-Build-Log
           path: |
             unity-build.log
-          retention-days: 3
+            unity_vr_player/unity-build.log
+            unity_vr_player/Library/PlayerDataCache/**/Editor.log
           if-no-files-found: warn
