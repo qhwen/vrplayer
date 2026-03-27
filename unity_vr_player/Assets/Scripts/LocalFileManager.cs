@@ -22,7 +22,9 @@ public class LocalFileManager : MonoBehaviour
     public static LocalFileManager Instance => instance;
 
     [Header("Scan Settings")]
+#if !UNITY_ANDROID
     [SerializeField] private bool includeCommonMediaFolders = true;
+#endif
     [SerializeField, Range(0, 5)] private int scanDepth = 0;
     [SerializeField, Range(20, 500)] private int maxCollectedVideos = 200;
 
